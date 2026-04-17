@@ -25,7 +25,6 @@ func _process(delta: float) -> void:
 		_move_humans()
 
 func _regenerate_world() -> void:
-	move_tick_accumulator = 0.0
 	world_grid.generate()
 	_spawn_humans()
 	queue_redraw()
@@ -35,26 +34,25 @@ func _spawn_humans() -> void:
 		human.queue_free()
 	humans.clear()
 
-	var walkable_cells := world_grid.get_all_walkable_cells()
-	_shuffle_vector2i_array(walkable_cells)
+	var occupied := {}
+	for _i in range(HUMAN_COUNT):
+		var spawn := world_grid.get_random_walkable_cell()
+		if not world_grid.is_walkable(spawn):
+			continue
 
-	var spawn_count := mini(HUMAN_COUNT, walkable_cells.size())
-	for i in range(spawn_count):
+		var key := "%s:%s" % [spawn.x, spawn.y]
+		if occupied.has(key):
+			continue
+		occupied[key] = true
+
 		var human := Human.new()
-		human.setup(walkable_cells[i], TILE_SIZE)
+		human.setup(world_grid, spawn, TILE_SIZE)
 		add_child(human)
 		humans.append(human)
 
 func _move_humans() -> void:
-	var occupied := {}
 	for human in humans:
-		occupied[_cell_key(human.grid_position)] = true
-
-	for human in humans:
-		occupied.erase(_cell_key(human.grid_position))
-		var next := human.choose_next_cell(world_grid, rng, occupied)
-		human.set_grid_position(next)
-		occupied[_cell_key(next)] = true
+		human.tick_move(rng)
 
 func _draw() -> void:
 	for y in range(world_grid.height):
@@ -63,17 +61,7 @@ func _draw() -> void:
 			draw_rect(Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE), _biome_color(biome))
 
 	draw_string(ThemeDB.fallback_font, Vector2(10, 18), "Enter = regenerar mundo", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
-	draw_string(ThemeDB.fallback_font, Vector2(10, 36), "Humanos: %s (sin superposición)" % humans.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
-
-func _shuffle_vector2i_array(items: Array[Vector2i]) -> void:
-	for i in range(items.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp := items[i]
-		items[i] = items[j]
-		items[j] = tmp
-
-func _cell_key(cell: Vector2i) -> String:
-	return "%s:%s" % [cell.x, cell.y]
+	draw_string(ThemeDB.fallback_font, Vector2(10, 36), "Humanos: %s (mueven por ticks)" % humans.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
 
 func _biome_color(biome: String) -> Color:
 	match biome:

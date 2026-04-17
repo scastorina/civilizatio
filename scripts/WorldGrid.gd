@@ -44,11 +44,10 @@ func is_walkable(cell: Vector2i) -> bool:
 	var biome: String = get_biome(cell)
 	return biome != "water" and biome != "mountain"
 
-func get_all_walkable_cells() -> Array[Vector2i]:
-	var walkable: Array[Vector2i] = []
-	for y in range(height):
-		for x in range(width):
-			var cell := Vector2i(x, y)
-			if is_walkable(cell):
-				walkable.append(cell)
-	return walkable
+func get_random_walkable_cell() -> Vector2i:
+	var max_tries := width * height * 2
+	for _i in range(max_tries):
+		var candidate := Vector2i(_rng.randi_range(0, width - 1), _rng.randi_range(0, height - 1))
+		if is_walkable(candidate):
+			return candidate
+	return Vector2i.ZERO

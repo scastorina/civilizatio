@@ -1,16 +1,18 @@
 extends Node2D
 class_name Human
 
+var grid: WorldGrid
 var grid_position: Vector2i = Vector2i.ZERO
 var tile_size: int = 16
 
-func setup(p_grid_position: Vector2i, p_tile_size: int) -> void:
+func setup(p_grid: WorldGrid, p_grid_position: Vector2i, p_tile_size: int) -> void:
+	grid = p_grid
 	grid_position = p_grid_position
 	tile_size = p_tile_size
 	_update_world_position()
 	queue_redraw()
 
-func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dictionary) -> Vector2i:
+func tick_move(rng: RandomNumberGenerator) -> void:
 	var directions: Array[Vector2i] = [
 		Vector2i(1, 0),
 		Vector2i(-1, 0),
@@ -26,17 +28,10 @@ func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dic
 
 	for dir in directions:
 		var next := grid_position + dir
-		if not grid.is_walkable(next):
-			continue
-		var key := "%s:%s" % [next.x, next.y]
-		if occupied.has(key):
-			continue
-		return next
-	return grid_position
-
-func set_grid_position(next: Vector2i) -> void:
-	grid_position = next
-	_update_world_position()
+		if grid.is_walkable(next):
+			grid_position = next
+			_update_world_position()
+			break
 
 func _update_world_position() -> void:
 	position = Vector2((grid_position.x + 0.5) * tile_size, (grid_position.y + 0.5) * tile_size)
