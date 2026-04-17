@@ -1,0 +1,7 @@
+.godot/
+.import/
+export_presets.cfg
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
