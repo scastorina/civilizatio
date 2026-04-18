@@ -110,7 +110,7 @@ func _spawn_initial_humans() -> void:
 
 func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	var human := Human.new()
-	human.setup(cell, TILE_SIZE, species["name"], species["color"], species["preferred"])
+	human.setup(cell, TILE_SIZE, species["name"] as String, species["color"] as Color, species["preferred"] as Array[String])
 	add_child(human)
 	humans.append(human)
 
