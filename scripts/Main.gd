@@ -1271,12 +1271,14 @@ func _draw() -> void:
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
 			var cell := Vector2i(x, y)
-			var c := _biome_color(world_grid.get_biome(cell))
+			var biome := world_grid.get_biome(cell)
+			var c := _biome_color(biome)
 			var owner := world_grid.get_owner(cell)
 			if owner != "":
 				var sc: Color = _species_colors.get(owner, Color.WHITE)
 				c = c.lerp(sc, 0.45)
 			draw_rect(Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE), c)
+			_draw_biome_detail(x, y, biome)
 
 	# Structures
 	for y in range(world_grid.height):
@@ -1334,10 +1336,38 @@ func _draw() -> void:
 	# Fire overlay
 	for cell: Vector2i in _fire_cells.keys():
 		var ft: int = _fire_cells[cell] as int
-		var alpha := lerpf(0.85, 0.4, float(ft) / 40.0)
-		var fire_c := Color(1.0, 0.40 + rng.randf() * 0.2, 0.0, alpha)
-		draw_rect(Rect2(cell.x * TILE_SIZE, cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE), fire_c)
-		draw_rect(Rect2(cell.x * TILE_SIZE + 3, cell.y * TILE_SIZE - 2, TILE_SIZE - 6, 4), Color(1.0, 0.85, 0.0, alpha * 0.8))
+		var alpha := lerpf(0.92, 0.46, float(ft) / 40.0)
+		var px := float(cell.x * TILE_SIZE)
+		var py := float(cell.y * TILE_SIZE)
+		var ts := float(TILE_SIZE)
+		var tms := float(Time.get_ticks_msec())
+		var flicker  := sin(tms * 0.018 + float(cell.x * 3 + cell.y * 7)) * 0.5 + 0.5
+		var flicker2 := sin(tms * 0.022 + float(cell.x * 5 + cell.y * 11) + 1.2) * 0.5 + 0.5
+		# Base ember glow
+		draw_rect(Rect2(px, py, ts, ts), Color(0.88, 0.26, 0.0, alpha * 0.82))
+		# Left flame tongue
+		var lh := ts * (0.44 + flicker * 0.32)
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(px+ts*0.05, py+ts), Vector2(px+ts*0.50, py+ts),
+			Vector2(px+ts*0.22, py+ts-lh),
+		]), Color(1.0, 0.46+flicker*0.24, 0.0, alpha))
+		# Right flame tongue
+		var rh := ts * (0.38 + flicker2 * 0.36)
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(px+ts*0.50, py+ts), Vector2(px+ts*0.95, py+ts),
+			Vector2(px+ts*0.78, py+ts-rh),
+		]), Color(1.0, 0.40+flicker2*0.22, 0.0, alpha))
+		# Center tall flame
+		var ch := ts * (0.56 + (flicker+flicker2) * 0.20)
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(px+ts*0.22, py+ts), Vector2(px+ts*0.78, py+ts),
+			Vector2(px+ts*0.50, py+ts-ch),
+		]), Color(1.0, 0.60+flicker*0.28, 0.04, alpha * 0.96))
+		# Yellow-white inner core
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(px+ts*0.35, py+ts*0.74), Vector2(px+ts*0.65, py+ts*0.74),
+			Vector2(px+ts*0.50, py+ts*0.74-ch*0.52),
+		]), Color(1.0, 0.94, 0.42, alpha * 0.76))
 
 	# Special effects (impact, lightning, rain, blessing)
 	for eff: Dictionary in _effects:
@@ -1349,28 +1379,74 @@ func _draw() -> void:
 		var cy := (ec.y + 0.5) * TILE_SIZE
 		match eff["type"] as String:
 			"impact":
-				var radius := lerpf(2.0, float(TILE_SIZE) * 4.5, minf(t * 3.0, 1.0))
+				var radius := lerpf(1.5, float(TILE_SIZE) * 5.2, minf(t * 2.5, 1.0))
 				var ialpha := lerpf(1.0, 0.0, t)
-				draw_circle(Vector2(cx, cy), radius, Color(1.0, 0.85, 0.3, ialpha * 0.7))
-				draw_circle(Vector2(cx, cy), radius * 0.5, Color(1.0, 1.0, 1.0, ialpha * 0.5))
+				# Outer shockwave ring
+				draw_circle(Vector2(cx, cy), radius * 1.35, Color(0.48, 0.28, 0.10, ialpha * 0.20))
+				# Main blast disk
+				draw_circle(Vector2(cx, cy), radius, Color(1.0, 0.66, 0.16, ialpha * 0.80))
+				draw_circle(Vector2(cx, cy), radius, Color(0.92, 0.44, 0.06, ialpha * 0.52), false, 2.5)
+				# White-hot core
+				draw_circle(Vector2(cx, cy), radius * 0.36, Color(1.0, 1.0, 0.90, ialpha * 0.92))
+				# Flying debris chunks
+				if t < 0.65:
+					for di in 6:
+						var da := deg_to_rad(float(di) * 60.0 + t * 55.0)
+						var dd := radius * (0.55 + float(di % 3) * 0.28)
+						draw_circle(Vector2(cx + cos(da)*dd, cy + sin(da)*dd), 2.5, Color(1.0, 0.52, 0.10, ialpha * 0.88))
 			"lightning":
 				var lalpha := lerpf(1.0, 0.0, t)
-				var top := Vector2(cx, 0.0)
-				draw_line(top, Vector2(cx + 4, cy * 0.4), Color(1.0, 1.0, 0.5, lalpha), 2.0)
-				draw_line(Vector2(cx + 4, cy * 0.4), Vector2(cx - 3, cy * 0.7), Color(1.0, 1.0, 0.5, lalpha), 2.0)
-				draw_line(Vector2(cx - 3, cy * 0.7), Vector2(cx, cy), Color(1.0, 1.0, 1.0, lalpha), 3.0)
+				# Bolt segments (zigzag from top of screen to target cell)
+				var z0 := Vector2(cx + 4.0, 0.0)
+				var z1 := Vector2(cx - 6.0, cy * 0.36)
+				var z2 := Vector2(cx + 5.0, cy * 0.64)
+				var z3 := Vector2(cx, cy)
+				# Outer glow (thick, pale blue-white)
+				var glow_c := Color(0.80, 0.84, 1.0, lalpha * 0.44)
+				draw_line(z0, z1, glow_c, 7.0)
+				draw_line(z1, z2, glow_c, 7.0)
+				draw_line(z2, z3, glow_c, 8.0)
+				# Core bright bolt (yellow-white)
+				draw_line(z0, z1, Color(1.0, 1.0, 0.62, lalpha), 2.5)
+				draw_line(z1, z2, Color(1.0, 1.0, 0.62, lalpha), 2.5)
+				draw_line(z2, z3, Color(1.0, 1.0, 1.0,  lalpha), 3.0)
+				# Side branch (visible only in first half)
+				if t < 0.45:
+					var ba := lalpha * (1.0 - t / 0.45)
+					draw_line(z2, z2 + Vector2(10.0, 14.0), Color(1.0, 1.0, 0.72, ba), 1.5)
+					draw_line(z2 + Vector2(10.0, 14.0), z2 + Vector2(17.0, 27.0), Color(1.0, 1.0, 0.68, ba * 0.65), 1.2)
+				# Ground impact flash
+				if t < 0.22:
+					var fi := (0.22 - t) / 0.22
+					draw_circle(z3, float(TILE_SIZE) * 2.0 * fi, Color(1.0, 1.0, 0.85, 0.46 * fi))
 			"rain":
-				var ralpha := lerpf(0.5, 0.0, t)
-				for di in range(-4, 5):
-					for dj in range(-4, 5):
-						var rx := cx + di * TILE_SIZE + rng.randf_range(-3, 3)
-						var ry := cy + dj * TILE_SIZE
-						draw_line(Vector2(rx, ry - 4), Vector2(rx - 1, ry + 2), Color(0.5, 0.75, 1.0, ralpha), 1.0)
+				var ralpha := lerpf(0.68, 0.0, t)
+				var time_ms := float(Time.get_ticks_msec())
+				for di in range(-5, 6):
+					for dj in range(-5, 6):
+						var base_rx := cx + float(di) * TILE_SIZE
+						var base_ry := cy + float(dj) * TILE_SIZE
+						# Animate drop positions scrolling downward
+						var drop_off := fmod(time_ms * 0.12 + float(di*7 + dj*13) * 3.7, float(TILE_SIZE))
+						var ry := base_ry + drop_off
+						draw_line(Vector2(base_rx + 1.5, ry - 5.0), Vector2(base_rx - 0.5, ry + 3.0),
+							Color(0.52, 0.80, 1.0, ralpha), 1.0)
 			"blessing":
-				var balpha := lerpf(0.7, 0.0, t)
-				var brad := lerpf(0.0, float(TILE_SIZE) * 3.5, t)
-				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.95, 0.3, balpha * 0.4))
-				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.9, 0.2, balpha * 0.6), false, 2.0)
+				var balpha := lerpf(0.82, 0.0, t)
+				var brad := lerpf(0.0, float(TILE_SIZE) * 3.8, t)
+				# Soft glow disk
+				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.94, 0.28, balpha * 0.30))
+				# Ring border
+				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.88, 0.18, balpha * 0.60), false, 2.0)
+				# Eight radiating rays rotating outward
+				for ri in 8:
+					var ra := deg_to_rad(float(ri) * 45.0 + t * 135.0)
+					var ri_r := brad * 0.28
+					var ro_r := brad * (0.75 + 0.25 * sin(float(ri) * 1.57 + t * 6.28))
+					draw_line(
+						Vector2(cx + cos(ra)*ri_r, cy + sin(ra)*ri_r),
+						Vector2(cx + cos(ra)*ro_r, cy + sin(ra)*ro_r),
+						Color(1.0, 0.92, 0.36, balpha * 0.64), 1.5)
 
 	# Active battle markers
 	for marker: Dictionary in _battle_markers:
@@ -2040,12 +2116,69 @@ func _cell_key(cell: Vector2i) -> String:
 
 func _biome_color(biome: String) -> Color:
 	match biome:
-		"water":    return Color(0.20, 0.45, 0.85)
-		"sand":     return Color(0.85, 0.80, 0.50)
-		"grass":    return Color(0.30, 0.70, 0.30)
-		"forest":   return Color(0.10, 0.45, 0.15)
-		"mountain": return Color(0.45, 0.45, 0.45)
+		"water":    return Color(0.12, 0.36, 0.92)
+		"sand":     return Color(0.90, 0.80, 0.42)
+		"grass":    return Color(0.20, 0.72, 0.22)
+		"forest":   return Color(0.06, 0.38, 0.10)
+		"mountain": return Color(0.50, 0.48, 0.44)
 		_:          return Color.WHITE
+
+# ── Per-tile biome detail decorations ─────────────────────────────────────────
+# Called from _draw() for every tile; uses deterministic per-cell hashing
+# so the pattern is stable across redraws without storing extra data.
+func _draw_biome_detail(x: int, y: int, biome: String) -> void:
+	var px := float(x) * TILE_SIZE
+	var py := float(y) * TILE_SIZE
+	var ts := float(TILE_SIZE)
+	var hv  := float((x * 7919 + y * 2053) & 0xFF) / 255.0
+	var hv2 := float((x * 3571 + y * 8191) & 0xFF) / 255.0
+	var hv3 := float((x * 1021 + y * 4093) & 0xFF) / 255.0
+	var hv4 := float((x * 2549 + y * 6143) & 0xFF) / 255.0
+	match biome:
+		"water":
+			var wc := Color(0.72, 0.90, 1.0, 0.28)
+			draw_arc(Vector2(px + ts*(0.15+hv*0.40),  py + ts*(0.28+hv2*0.25)), ts*0.22, PI, TAU, 7, wc, 1.0)
+			draw_arc(Vector2(px + ts*(0.15+hv3*0.40), py + ts*(0.60+hv4*0.20)), ts*0.16, PI, TAU, 6, wc, 1.0)
+		"sand":
+			var sc := Color(0.60, 0.52, 0.26, 0.55)
+			for i in 3:
+				var ph  := float(((x + i*127)*7919 + y*2053) & 0xFF) / 255.0
+				var ph2 := float((x*3571 + (y + i*91)*8191) & 0xFF) / 255.0
+				draw_circle(Vector2(px + ts*(0.12+ph*0.76), py + ts*(0.12+ph2*0.76)), ts*(0.05+ph*0.06), sc)
+		"grass":
+			var bc := Color(0.12, 0.48, 0.12, 0.60)
+			for i in 2:
+				var ph  := float(((x+i*53)*7919 + y*2053) & 0xFF) / 255.0
+				var ph2 := float((x*3571 + (y+i*71)*8191) & 0xFF) / 255.0
+				var bx  := px + ts*(0.18+ph*0.64)
+				var by  := py + ts*(0.55+ph2*0.32)
+				var bh  := ts * 0.32
+				draw_line(Vector2(bx, by), Vector2(bx - ts*0.09, by - bh), bc, 1.0)
+				draw_line(Vector2(bx, by), Vector2(bx + ts*0.09, by - bh), bc, 1.0)
+		"forest":
+			var fc1 := Color(0.04, 0.22, 0.06, 0.84)
+			var fc2 := Color(0.10, 0.38, 0.10, 0.68)
+			draw_circle(Vector2(px + ts*(0.32+hv*0.36), py + ts*(0.34+hv2*0.32)), ts*0.40, fc1)
+			draw_circle(Vector2(px + ts*(0.30+hv3*0.26), py + ts*(0.30+hv4*0.26)), ts*0.22, fc2)
+		"mountain":
+			var peak_x := px + ts*(0.28+hv*0.44)
+			var peak_y := py + ts*(0.05+hv2*0.14)
+			var base_y := py + ts*0.92
+			var hw     := ts*(0.26+hv3*0.18)
+			# Left face (lighter)
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(peak_x, peak_y), Vector2(peak_x-hw, base_y), Vector2(peak_x, base_y),
+			]), Color(0.72, 0.70, 0.66, 0.90))
+			# Right face (darker)
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(peak_x, peak_y), Vector2(peak_x, base_y), Vector2(peak_x+hw, base_y),
+			]), Color(0.36, 0.34, 0.32, 0.90))
+			# Snow cap
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(peak_x, peak_y),
+				Vector2(peak_x - hw*0.24, peak_y + ts*0.20),
+				Vector2(peak_x + hw*0.24, peak_y + ts*0.20),
+			]), Color(0.96, 0.96, 0.98, 0.94))
 
 # ── Minimap ──────────────────────────────────────────────────────────────────
 
