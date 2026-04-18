@@ -63,7 +63,7 @@ func _build() -> void:
 		btn.position = Vector2(x, yc)
 		bg.add_child(btn)
 		_biome_btns.append(btn)
-		var ci := i
+		var ci: int = i
 		btn.pressed.connect(func(): _on_biome(ci))
 		x += BTN + GAP
 	x += PAD
