@@ -2000,14 +2000,14 @@ func _draw_settlement_perimeter(cluster: Dictionary) -> void:
 		var tower_r := 2.5 if fort_level == 2 else 3.5
 		var tower_c := wall_color.lightened(0.12)
 		for cell: Vector2i in cluster["cells"]:
-			for cdx in [0, 1]:
-				for cdy in [0, 1]:
-					var cx_i := cell.x + cdx
-					var cy_i := cell.y + cdy
+			for cdx: int in [0, 1]:
+				for cdy: int in [0, 1]:
+					var cx_i: int = cell.x + cdx
+					var cy_i: int = cell.y + cdy
 					# Count how many of the 4 tiles sharing this corner are in the set
 					var n := 0
-					for nx in [cx_i - 1, cx_i]:
-						for ny in [cy_i - 1, cy_i]:
+					for nx: int in [cx_i - 1, cx_i]:
+						for ny: int in [cy_i - 1, cy_i]:
 							if cell_set.has(Vector2i(nx, ny)):
 								n += 1
 					# Only draw at convex outer corners (exactly 1 tile from cluster)
