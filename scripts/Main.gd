@@ -38,8 +38,13 @@ var current_speed_idx := 1
 var current_map_idx := 0
 var mouse_painting := false
 var last_painted_cell := Vector2i(-1, -1)
+var _panning := false
+var _pan_origin := Vector2.ZERO
+var _cam_origin := Vector2.ZERO
 
 var ui: GameUI
+var hud: GameHUD
+var camera: Camera2D
 
 func _ready() -> void:
 	rng.randomize()
@@ -50,6 +55,17 @@ func _ready() -> void:
 		_species_defense[n] = sp["defense"] as float
 		_species_tech[n]    = 0
 		_species_research[n] = 0.0
+	camera = Camera2D.new()
+	camera.zoom = Vector2(2.0, 2.0)
+	camera.position = Vector2(WORLD_WIDTH * TILE_SIZE * 0.5, WORLD_HEIGHT * TILE_SIZE * 0.5)
+	add_child(camera)
+
+	var hud_layer := CanvasLayer.new()
+	hud_layer.layer = 5
+	add_child(hud_layer)
+	hud = GameHUD.new()
+	hud_layer.add_child(hud)
+
 	ui = GameUI.new()
 	add_child(ui)
 	ui.setup_species(SPECIES_LIBRARY)
@@ -75,6 +91,7 @@ func _process(delta: float) -> void:
 		ticked = true
 	if ticked:
 		queue_redraw()
+		_refresh_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -82,16 +99,40 @@ func _unhandled_input(event: InputEvent) -> void:
 			_regenerate_world()
 			return
 
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		mouse_painting = event.pressed
-		if event.pressed:
-			last_painted_cell = Vector2i(-1, -1)
-			_apply_tool_at(event.position)
-		else:
-			last_painted_cell = Vector2i(-1, -1)
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera.zoom = (camera.zoom * 1.15).clamp(Vector2(0.5, 0.5), Vector2(8.0, 8.0))
+			_clamp_camera()
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera.zoom = (camera.zoom / 1.15).clamp(Vector2(0.5, 0.5), Vector2(8.0, 8.0))
+			_clamp_camera()
+			return
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_panning = event.pressed
+			if event.pressed:
+				_pan_origin = event.position
+				_cam_origin = camera.position
+			return
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			mouse_painting = event.pressed
+			if event.pressed:
+				last_painted_cell = Vector2i(-1, -1)
+				_apply_tool_at(event.position)
+			else:
+				last_painted_cell = Vector2i(-1, -1)
 
-	if event is InputEventMouseMotion and mouse_painting:
-		_apply_tool_at(event.position)
+	if event is InputEventMouseMotion:
+		if _panning:
+			camera.position = _cam_origin - (event.position - _pan_origin) / camera.zoom.x
+			_clamp_camera()
+		elif mouse_painting:
+			_apply_tool_at(event.position)
+
+func _clamp_camera() -> void:
+	var half := get_viewport_rect().size * 0.5 / camera.zoom.x
+	camera.position.x = clampf(camera.position.x, half.x, WORLD_WIDTH  * TILE_SIZE - half.x)
+	camera.position.y = clampf(camera.position.y, half.y, WORLD_HEIGHT * TILE_SIZE - half.y)
 
 func _apply_tool_at(pos: Vector2) -> void:
 	var cell := _mouse_to_cell(pos)
@@ -309,7 +350,7 @@ func _draw() -> void:
 			var owner := world_grid.get_owner(cell)
 			if owner != "":
 				var sc: Color = _species_colors.get(owner, Color.WHITE)
-				c = c.lerp(sc, 0.30)
+				c = c.lerp(sc, 0.45)
 			draw_rect(Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE), c)
 
 	# Structures
@@ -358,47 +399,6 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(cpos.x - tw * 0.5 + 3.0, cpos.y + 2.5),
 			name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, tc)
 
-	# Species stats overlay (top-left)
-	var stats := _species_stats()
-	var overlay_h := 20.0 + stats.size() * 18.0
-	draw_rect(Rect2(0, 0, 320, overlay_h), Color(0.0, 0.0, 0.0, 0.55))
-	var oy := 16.0
-	for line in stats:
-		draw_string(ThemeDB.fallback_font, Vector2(8, oy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
-		oy += 18.0
-
-	# Chronicle panel (top-right)
-	var cx0 := float(WORLD_WIDTH * TILE_SIZE) - 225.0
-	var visible_events := mini(_chronicle.size(), 18)
-	var ch := 22.0 + visible_events * 14.0 + 20.0
-	draw_rect(Rect2(cx0 - 4, 0, 229, ch), Color(0.04, 0.04, 0.08, 0.80))
-	draw_string(ThemeDB.fallback_font, Vector2(cx0, 14), "— CRÓNICA  Año %d —" % world_year,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.85, 0.78, 0.45))
-	var start_idx := maxi(0, _chronicle.size() - 18)
-	var cy := 28.0
-	for i in range(start_idx, _chronicle.size()):
-		var ec: Color = _chronicle_colors[i]
-		draw_string(ThemeDB.fallback_font, Vector2(cx0, cy), _chronicle[i],
-			HORIZONTAL_ALIGNMENT_LEFT, 220, 10, ec.lightened(0.2))
-		cy += 14.0
-
-	# Heroes panel (below chronicle)
-	var heroes: Array[Human] = []
-	for h in humans:
-		if h.is_hero:
-			heroes.append(h)
-	if not heroes.is_empty():
-		var hy := ch + 4.0
-		draw_rect(Rect2(cx0 - 4, hy, 229, 18.0 + heroes.size() * 14.0), Color(0.08, 0.06, 0.02, 0.82))
-		draw_string(ThemeDB.fallback_font, Vector2(cx0, hy + 13.0), "— HÉROES VIVOS —",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.85, 0.20))
-		var hcy := hy + 26.0
-		for hero in heroes:
-			var hc: Color = _species_colors.get(hero.species_name, Color.WHITE) as Color
-			draw_string(ThemeDB.fallback_font, Vector2(cx0, hcy),
-				"★ %s (%s) — %d batallas" % [hero.hero_name, hero.species_name, hero.battles_won],
-				HORIZONTAL_ALIGNMENT_LEFT, 220, 10, hc.lightened(0.3))
-			hcy += 14.0
 
 func _species_stats() -> Array[String]:
 	var result: Array[String] = []
@@ -539,8 +539,29 @@ func _draw_town(cx: float, cy: float, sc: Color) -> void:
 		Vector2(cx, cy - 11.5), Vector2(cx + 4.0, cy - 9.8), Vector2(cx, cy - 8.2)
 	]), sc.lightened(0.3))
 
-func _mouse_to_cell(pos: Vector2) -> Vector2i:
-	return Vector2i(int(floor(pos.x / TILE_SIZE)), int(floor(pos.y / TILE_SIZE)))
+func _mouse_to_cell(screen_pos: Vector2) -> Vector2i:
+	var vp_center := get_viewport_rect().size * 0.5
+	var world_pos := camera.position + (screen_pos - vp_center) / camera.zoom.x
+	return Vector2i(int(floor(world_pos.x / TILE_SIZE)), int(floor(world_pos.y / TILE_SIZE)))
+
+func _refresh_hud() -> void:
+	var stats_lines: Array[String] = []
+	var stats_colors: Array[Color] = []
+	var raw := _species_stats()
+	for sp: Dictionary in SPECIES_LIBRARY:
+		var n := sp["name"] as String
+		for line in raw:
+			if (line as String).begins_with(n):
+				stats_lines.append(line)
+				stats_colors.append((_species_colors.get(n, Color.WHITE) as Color).lightened(0.2))
+				break
+	var hero_lines: Array[String] = []
+	var hero_colors: Array[Color] = []
+	for h in humans:
+		if h.is_hero:
+			hero_lines.append("★ %s (%s) — %d batallas" % [h.hero_name, h.species_name, h.battles_won])
+			hero_colors.append((_species_colors.get(h.species_name, Color.WHITE) as Color))
+	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year)
 
 func _has_human_in_cell(cell: Vector2i) -> bool:
 	for human in humans:
