@@ -90,6 +90,58 @@ func _update_world_position() -> void:
 
 func _draw() -> void:
 	var health := clampf((evolution_score + 20.0) / 40.0, 0.0, 1.0)
-	var c := species_color.lerp(Color(0.5, 0.1, 0.1), 1.0 - health)
-	draw_circle(Vector2.ZERO, tile_size * 0.28, c)
-	draw_circle(Vector2.ZERO, tile_size * 0.14, Color(0.20, 0.15, 0.12))
+	var c := species_color.lerp(Color(0.4, 0.08, 0.08), 1.0 - health)
+	var dk := c.darkened(0.45)
+	var s := tile_size * 0.30
+	match species_name:
+		"Humanos":  _draw_human(c, dk, s)
+		"Elfos":    _draw_elf(c, dk, s)
+		"Enanos":   _draw_dwarf(c, dk, s)
+		"Orcos":    _draw_orc(c, dk, s)
+		_:
+			draw_circle(Vector2.ZERO, s, c)
+
+func _draw_human(c: Color, dk: Color, s: float) -> void:
+	draw_circle(Vector2(0, -s * 0.62), s * 0.42, c)
+	draw_circle(Vector2(0, -s * 0.62), s * 0.42, dk, false, 1.0)
+	var body := PackedVector2Array([
+		Vector2(-s*0.38, -s*0.18), Vector2(s*0.38, -s*0.18),
+		Vector2(s*0.30, s*0.62),   Vector2(-s*0.30, s*0.62),
+	])
+	draw_colored_polygon(body, c)
+	draw_polyline(body, dk, 1.0)
+
+func _draw_elf(c: Color, dk: Color, s: float) -> void:
+	draw_circle(Vector2(0, -s * 0.62), s * 0.38, c)
+	draw_circle(Vector2(0, -s * 0.62), s * 0.38, dk, false, 1.0)
+	draw_line(Vector2(-s*0.34, -s*0.88), Vector2(-s*0.54, -s*1.18), c, 1.5)
+	draw_line(Vector2(s*0.34, -s*0.88),  Vector2(s*0.54, -s*1.18),  c, 1.5)
+	var body := PackedVector2Array([
+		Vector2(-s*0.28, -s*0.22), Vector2(s*0.28, -s*0.22),
+		Vector2(s*0.20, s*0.60),   Vector2(-s*0.20, s*0.60),
+	])
+	draw_colored_polygon(body, c)
+	draw_polyline(body, dk, 1.0)
+
+func _draw_dwarf(c: Color, dk: Color, s: float) -> void:
+	draw_circle(Vector2(0, -s * 0.48), s * 0.45, c)
+	draw_circle(Vector2(0, -s * 0.48), s * 0.45, dk, false, 1.0)
+	draw_circle(Vector2(0, -s * 0.05), s * 0.30, c.lightened(0.25))
+	var body := PackedVector2Array([
+		Vector2(-s*0.48, -s*0.10), Vector2(s*0.48, -s*0.10),
+		Vector2(s*0.44, s*0.52),   Vector2(-s*0.44, s*0.52),
+	])
+	draw_colored_polygon(body, c)
+	draw_polyline(body, dk, 1.0)
+
+func _draw_orc(c: Color, dk: Color, s: float) -> void:
+	draw_circle(Vector2(0, -s * 0.52), s * 0.50, c)
+	draw_circle(Vector2(0, -s * 0.52), s * 0.50, dk, false, 1.0)
+	draw_line(Vector2(-s*0.22, -s*0.18), Vector2(-s*0.28, s*0.08), Color(0.95, 0.95, 0.85), 1.5)
+	draw_line(Vector2(s*0.22, -s*0.18),  Vector2(s*0.28, s*0.08),  Color(0.95, 0.95, 0.85), 1.5)
+	var body := PackedVector2Array([
+		Vector2(-s*0.46, -s*0.10), Vector2(s*0.46, -s*0.10),
+		Vector2(s*0.40, s*0.58),   Vector2(-s*0.40, s*0.58),
+	])
+	draw_colored_polygon(body, c)
+	draw_polyline(body, dk, 1.0)
