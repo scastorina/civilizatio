@@ -43,6 +43,7 @@ var _pan_origin := Vector2.ZERO
 var _cam_origin := Vector2.ZERO
 var _fire_cells: Dictionary = {}
 var _effects: Array[Dictionary] = []
+var _trade_routes: Array[Dictionary] = []
 
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 
@@ -96,10 +97,13 @@ func _process(delta: float) -> void:
 		_tick_fire()
 		_tick_plague()
 		_advance_effects()
+		_update_trade()
 		ticked = true
 	if ticked:
 		queue_redraw()
 		_refresh_hud()
+	elif not _trade_routes.is_empty() or not _effects.is_empty() or not _fire_cells.is_empty():
+		queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -176,6 +180,7 @@ func _regenerate_world() -> void:
 	_known_kingdoms.clear()
 	_fire_cells.clear()
 	_effects.clear()
+	_trade_routes.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
@@ -354,6 +359,64 @@ func _update_technology() -> void:
 		if lvl < TECH_THRESHOLDS.size() and (_species_research[sp_name] as float) >= TECH_THRESHOLDS[lvl]:
 			_species_tech[sp_name] = lvl + 1
 			_log_event("Año %d: Los %s alcanzaron tecnología nivel %d" % [world_year, sp_name, lvl + 1], sp_name)
+
+func _update_trade() -> void:
+	var towns: Dictionary = {}
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			if world_grid.get_structure(cell) == "town":
+				var owner := world_grid.get_owner(cell)
+				if owner != "":
+					if not towns.has(owner):
+						towns[owner] = []
+					(towns[owner] as Array).append(cell)
+
+	var new_routes: Array[Dictionary] = []
+	for species: String in towns.keys():
+		var sp_towns: Array = towns[species]
+		for i in sp_towns.size():
+			var best_dist := 999999.0
+			var best_j := -1
+			for j in sp_towns.size():
+				if j == i:
+					continue
+				var dist := (sp_towns[i] as Vector2i).distance_to(sp_towns[j] as Vector2i)
+				if dist < best_dist and dist < 35.0:
+					best_dist = dist
+					best_j = j
+			if best_j < 0:
+				continue
+			var a: Vector2i = sp_towns[i] as Vector2i
+			var b: Vector2i = sp_towns[best_j] as Vector2i
+			var already := false
+			for r: Dictionary in new_routes:
+				if (r["from"] == a and r["to"] == b) or (r["from"] == b and r["to"] == a):
+					already = true
+					break
+			if not already:
+				new_routes.append({"from": a, "to": b, "species": species})
+
+	for r: Dictionary in new_routes:
+		var existed := false
+		for old: Dictionary in _trade_routes:
+			if (old["from"] == r["from"] and old["to"] == r["to"]) or (old["from"] == r["to"] and old["to"] == r["from"]):
+				existed = true
+				break
+		if not existed:
+			_log_event("Año %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
+
+	_trade_routes = new_routes
+
+	var trade_towns: Dictionary = {}
+	for r: Dictionary in _trade_routes:
+		trade_towns[r["from"] as Vector2i] = true
+		trade_towns[r["to"] as Vector2i] = true
+	for human in humans:
+		for town_cell: Vector2i in trade_towns.keys():
+			if (human.grid_position - town_cell).length() <= 2.0:
+				human.evolution_score += 0.01
+				break
 
 func _apply_power_at(cell: Vector2i) -> void:
 	var power: String = GameUI.POWERS[ui.selected_power]
@@ -563,6 +626,29 @@ func _draw() -> void:
 				var brad := lerpf(0.0, float(TILE_SIZE) * 3.5, t)
 				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.95, 0.3, balpha * 0.4))
 				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.9, 0.2, balpha * 0.6), false, 2.0)
+
+	# Trade routes
+	var anim_t := fmod(float(Time.get_ticks_msec()) / 300.0, 1.0)
+	for route: Dictionary in _trade_routes:
+		var ra: Vector2i = route["from"] as Vector2i
+		var rb: Vector2i = route["to"] as Vector2i
+		var rsp: String  = route["species"] as String
+		var rc: Color    = (_species_colors.get(rsp, Color.WHITE) as Color).lightened(0.25)
+		rc.a = 0.60
+		var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
+		var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
+		var total_len := wp_a.distance_to(wp_b)
+		var dir := (wp_b - wp_a).normalized()
+		var period := 7.0
+		var seg_start := anim_t * period
+		while seg_start < total_len:
+			var seg_end := minf(seg_start + 4.0, total_len)
+			draw_line(wp_a + dir * seg_start, wp_a + dir * seg_end, rc, 1.5)
+			seg_start += period
+		var caravan_t := fmod(float(Time.get_ticks_msec()) / 2000.0, 1.0)
+		var caravan_pos := wp_a.lerp(wp_b, caravan_t)
+		draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
+		draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
 
 	# Territory labels
 	for cluster in _find_territory_clusters():
