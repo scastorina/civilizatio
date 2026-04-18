@@ -1,6 +1,8 @@
 extends CanvasLayer
 class_name GameUI
 
+const IconDrawerScript = preload("res://scripts/IconDrawer.gd")
+
 signal biome_selected(idx: int)
 signal species_selected(idx: int)
 signal time_speed_changed(idx: int)
@@ -19,7 +21,7 @@ const PAD     := 8
 # ── Data tables ──────────────────────────────────────────────────────────────
 
 const BIOMES: Array[String]       = ["water",  "sand",   "grass",   "forest",  "mountain"]
-const BIOME_ICONS: Array[String]  = ["~",      ".",      "v",       "Y",       "^"]
+const BIOME_ICONS: Array[String]  = ["biome_water", "biome_sand", "biome_grass", "biome_forest", "biome_mountain"]
 const BIOME_LABELS: Array[String] = ["Agua",   "Arena",  "Hierba",  "Bosque",  "Monte"]
 const BIOME_COLORS: Array[Color]  = [
 	Color(0.12, 0.46, 0.92),   # water   – vivid blue
@@ -30,7 +32,7 @@ const BIOME_COLORS: Array[Color]  = [
 ]
 
 const POWERS: Array[String]        = ["meteor",   "lightning", "fire",   "plague", "rain",    "blessing"]
-const POWER_ICONS: Array[String]   = ["*",        "z",         "W",      "x",      "~",       "o"]
+const POWER_ICONS: Array[String]   = ["power_meteor", "power_lightning", "power_fire", "power_plague", "power_rain", "power_blessing"]
 const POWER_LABELS: Array[String]  = ["Meteoro",  "Rayo",      "Fuego",  "Plaga",  "Lluvia",  "Bendic"]
 const POWER_COLORS: Array[Color]   = [
 	Color(0.92, 0.35, 0.08),   # meteor    – deep orange
@@ -41,21 +43,21 @@ const POWER_COLORS: Array[Color]   = [
 	Color(0.98, 0.88, 0.16),   # blessing  – gold
 ]
 
-# Tab: [id, big_icon, label, accent_color]
+# Tab: [id, icon_type, label, accent_color]
 const TAB_DEFS: Array[Array] = [
-	["terrain",  "///",  "Terreno",  Color(0.18, 0.82, 0.36)],
-	["entities", "o o",  "Entes",    Color(0.95, 0.58, 0.14)],
-	["world",    "( )",  "Mundo",    Color(0.18, 0.62, 0.96)],
-	["powers",   "***",  "Poderes",  Color(0.95, 0.22, 0.22)],
+	["terrain",  "tab_terrain",  "Terreno",  Color(0.18, 0.82, 0.36)],
+	["entities", "tab_entities", "Entes",    Color(0.95, 0.58, 0.14)],
+	["world",    "tab_world",    "Mundo",    Color(0.18, 0.62, 0.96)],
+	["powers",   "tab_powers",   "Poderes",  Color(0.95, 0.22, 0.22)],
 ]
 
-# Speed: [idx, label, color]
+# Speed: [idx, icon_type, color]
 const SPEED_DEFS: Array[Array] = [
-	[0, "  II  ", Color(0.88, 0.22, 0.22)],
-	[1, "  >  ",  Color(0.22, 0.82, 0.38)],
-	[2, " >>  ",  Color(0.55, 0.84, 0.22)],
-	[3, " >>> ",  Color(0.95, 0.85, 0.18)],
-	[4, ">>>>",   Color(0.95, 0.50, 0.12)],
+	[0, "pause",   Color(0.88, 0.22, 0.22)],
+	[1, "speed_1", Color(0.22, 0.82, 0.38)],
+	[2, "speed_2", Color(0.55, 0.84, 0.22)],
+	[3, "speed_3", Color(0.95, 0.85, 0.18)],
+	[4, "speed_4", Color(0.95, 0.50, 0.12)],
 ]
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -163,9 +165,9 @@ func _build_bar(bar: Panel) -> void:
 	# ── Speed buttons ──
 	for sd: Array in SPEED_DEFS:
 		var si   := sd[0] as int
-		var slbl := sd[1] as String
+		var sico := sd[1] as String
 		var scol := sd[2] as Color
-		var btn  := _make_icon_btn(slbl, "", scol, 46.0, float(BTN))
+		var btn  := _make_icon_btn(sico, "", scol, 46.0, float(BTN))
 		btn.position = Vector2(x, yc)
 		bar.add_child(btn)
 		_speed_btns[si] = btn
@@ -175,7 +177,7 @@ func _build_bar(bar: Panel) -> void:
 	x += PAD; _divider(bar, x, yc); x += GAP + 5.0
 
 	# ── Regen button ──
-	var regen := _make_icon_btn("GEN", "Nuevo", Color(0.80, 0.50, 0.15), 58.0, float(BTN))
+	var regen := _make_icon_btn("regen", "Nuevo", Color(0.80, 0.50, 0.15), 58.0, float(BTN))
 	regen.position = Vector2(x, yc)
 	bar.add_child(regen)
 	regen.pressed.connect(func(): regenerate_requested.emit())
@@ -193,7 +195,7 @@ func _build_bar(bar: Panel) -> void:
 	bar.add_child(_chronicle_prompt_label)
 
 	for i in range(3):
-		var reply_btn := _make_icon_btn("...", "", Color(0.80, 0.65, 0.22), 88.0, 28.0)
+		var reply_btn := _make_text_btn(Color(0.80, 0.65, 0.22), 88.0, 28.0)
 		reply_btn.position = Vector2(x + i * 92.0, yc + 20.0)
 		reply_btn.visible = false
 		var oi := i
@@ -241,9 +243,8 @@ func _build_entity_content() -> void:
 		var sp    := _species_data[i] as Dictionary
 		var sname := sp["name"] as String
 		var scol  := sp["color"] as Color
-		# Use initials as icon, species color as button color
-		var icon  := sname.substr(0, 2)
-		var btn   := _make_icon_btn(icon, sname, scol, 82.0, float(BTN))
+		var icon_type := "species_" + sname.to_lower()
+		var btn   := _make_icon_btn(icon_type, sname, scol, 82.0, float(BTN))
 		btn.position = Vector2(x, yc)
 		_entity_content.add_child(btn)
 		_species_btns.append(btn)
@@ -265,9 +266,9 @@ func _build_world_content() -> void:
 	x += 78.0
 
 	var maps: Array[Array] = [
-		[0, "?",  "Aleatorio",   Color(0.58, 0.55, 0.90)],
-		[1, "~",  "Tipo Tierra", Color(0.22, 0.75, 0.45)],
-		[2, "O",  "Continente",  Color(0.18, 0.65, 0.92)],
+		[0, "map_random",    "Aleatorio",   Color(0.58, 0.55, 0.90)],
+		[1, "map_earthlike", "Tipo Tierra", Color(0.22, 0.75, 0.45)],
+		[2, "map_continent", "Continente",  Color(0.18, 0.65, 0.92)],
 	]
 	for md: Array in maps:
 		var mi  := md[0] as int
@@ -406,12 +407,14 @@ func _refresh_power_highlights() -> void:
 
 # ── Widget factories ──────────────────────────────────────────────────────────
 
-# Two-line icon button: large symbol on top, small label below.
-# When label is empty the icon fills the whole button (speed / regen).
-func _make_icon_btn(icon: String, label: String, color: Color,
+# Icon button using IconDrawer for vector graphics.
+# icon_type  — key passed to IconDrawer (e.g. "tab_terrain", "power_fire")
+# label      — text shown below the icon; pass "" for icon-only (speed/regen)
+func _make_icon_btn(icon_type: String, label: String, color: Color,
 		w: float = BTN, h: float = BTN) -> Button:
 	var btn := Button.new()
 	btn.size = Vector2(w, h)
+	btn.text = ""
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.clip_children = CanvasItem.CLIP_CHILDREN_ONLY
 
@@ -421,38 +424,51 @@ func _make_icon_btn(icon: String, label: String, color: Color,
 	btn.add_theme_stylebox_override("focus",   _style_btn(color, false))
 
 	if label == "":
-		btn.text = icon
-		btn.add_theme_font_size_override("font_size", 14)
-		btn.add_theme_color_override("font_color",       Color.WHITE)
-		btn.add_theme_color_override("font_color_hover", Color.WHITE)
+		# Icon fills the whole button
+		var dr := IconDrawerScript.new()
+		dr.icon_type  = icon_type
+		dr.icon_color = Color.WHITE
+		dr.position   = Vector2.ZERO
+		dr.size       = Vector2(w, h)
+		btn.add_child(dr)
 		return btn
 
-	# Two-row layout
-	btn.text = ""
-
-	var icon_lbl := Label.new()
-	icon_lbl.text = icon
-	icon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	icon_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	icon_lbl.position = Vector2(0.0, 3.0)
-	icon_lbl.size     = Vector2(w, h * 0.54)
-	icon_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon_lbl.add_theme_font_size_override("font_size", 20)
-	icon_lbl.add_theme_color_override("font_color", Color.WHITE)
-	btn.add_child(icon_lbl)
+	# Two-row layout: icon top ~60%, label bottom ~38%
+	var icon_h := h * 0.60
+	var dr2 := IconDrawerScript.new()
+	dr2.icon_type  = icon_type
+	dr2.icon_color = Color.WHITE
+	dr2.position   = Vector2(0.0, 2.0)
+	dr2.size       = Vector2(w, icon_h - 2.0)
+	btn.add_child(dr2)
 
 	var name_lbl := Label.new()
 	name_lbl.text = label
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	name_lbl.position = Vector2(1.0, h * 0.57)
-	name_lbl.size     = Vector2(w - 2.0, h * 0.40)
+	name_lbl.position = Vector2(1.0, icon_h)
+	name_lbl.size     = Vector2(w - 2.0, h * 0.38)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.add_theme_font_size_override("font_size", 10)
 	name_lbl.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.92))
 	name_lbl.clip_text = true
 	btn.add_child(name_lbl)
 
+	return btn
+
+
+# Plain text button (used for chronicle reply options that display dynamic text)
+func _make_text_btn(color: Color, w: float, h: float) -> Button:
+	var btn := Button.new()
+	btn.size = Vector2(w, h)
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_stylebox_override("normal",  _style_btn(color, false))
+	btn.add_theme_stylebox_override("hover",   _style_flat(color.darkened(0.12), Color.WHITE, 3))
+	btn.add_theme_stylebox_override("pressed", _style_flat(color.darkened(0.05), Color.WHITE, 3))
+	btn.add_theme_stylebox_override("focus",   _style_btn(color, false))
+	btn.add_theme_font_size_override("font_size", 10)
+	btn.add_theme_color_override("font_color",       Color.WHITE)
+	btn.add_theme_color_override("font_color_hover", Color.WHITE)
 	return btn
 
 
