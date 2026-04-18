@@ -94,8 +94,8 @@ func _update_world_position() -> void:
 func _draw() -> void:
 	var health := clampf((evolution_score + 20.0) / 40.0, 0.0, 1.0)
 	var c := species_color.lerp(Color(0.4, 0.08, 0.08), 1.0 - health)
-	var dk := c.darkened(0.45)
-	var s := tile_size * 0.30
+	var dk := c.darkened(0.50)
+	var s := float(tile_size) * 0.42
 	match species_name:
 		"Humanos":  _draw_human(c, dk, s)
 		"Elfos":    _draw_elf(c, dk, s)
@@ -107,57 +107,152 @@ func _draw() -> void:
 		_draw_hero_marker(s)
 
 func _draw_hero_marker(s: float) -> void:
-	var gold := Color(1.0, 0.85, 0.20)
-	var tip := s * 1.55
-	var pts := PackedVector2Array()
+	var gold := Color(1.0, 0.88, 0.10)
+	var tip  := s * 1.70
+	var pts  := PackedVector2Array()
 	for i in range(5):
-		var outer_a := deg_to_rad(-90.0 + i * 72.0)
-		var inner_a := deg_to_rad(-90.0 + i * 72.0 + 36.0)
-		pts.append(Vector2(cos(outer_a), sin(outer_a)) * s * 0.55 + Vector2(0, -tip))
-		pts.append(Vector2(cos(inner_a), sin(inner_a)) * s * 0.22 + Vector2(0, -tip))
+		var oa := deg_to_rad(-90.0 + i * 72.0)
+		var ia := deg_to_rad(-90.0 + i * 72.0 + 36.0)
+		pts.append(Vector2(cos(oa), sin(oa)) * s * 0.60 + Vector2(0.0, -tip))
+		pts.append(Vector2(cos(ia), sin(ia)) * s * 0.24 + Vector2(0.0, -tip))
 	draw_colored_polygon(pts, gold)
+	draw_polyline(pts, Color(0.85, 0.65, 0.0), 1.0)
 
+# ── Humanos ─────────────────────────────────────────────────────────────────
+# Balanced meeple: round head, trapezoid torso, visible eyes and smile
 func _draw_human(c: Color, dk: Color, s: float) -> void:
-	draw_circle(Vector2(0, -s * 0.62), s * 0.42, c)
-	draw_circle(Vector2(0, -s * 0.62), s * 0.42, dk, false, 1.0)
-	var body := PackedVector2Array([
-		Vector2(-s*0.38, -s*0.18), Vector2(s*0.38, -s*0.18),
-		Vector2(s*0.30, s*0.62),   Vector2(-s*0.30, s*0.62),
-	])
-	draw_colored_polygon(body, c)
-	draw_polyline(body, dk, 1.0)
+	# Torso
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.36, -s*0.16), Vector2(s*0.36, -s*0.16),
+		Vector2(s*0.28,  s*0.62),  Vector2(-s*0.28, s*0.62),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.36, -s*0.16), Vector2(s*0.36, -s*0.16),
+		Vector2(s*0.28,  s*0.62),  Vector2(-s*0.28, s*0.62),
+		Vector2(-s*0.36, -s*0.16),
+	]), dk, 1.0)
+	# Head
+	var hc := Vector2(0.0, -s*0.60)
+	draw_circle(hc, s*0.42, c)
+	draw_circle(hc, s*0.42, dk, false, 1.0)
+	# Eyes
+	draw_circle(hc + Vector2(-s*0.14, -s*0.06), s*0.09, dk)
+	draw_circle(hc + Vector2( s*0.14, -s*0.06), s*0.09, dk)
+	# Smile
+	draw_arc(hc + Vector2(0.0, s*0.06), s*0.16, deg_to_rad(20.0), deg_to_rad(160.0), 6, dk, 1.0)
 
+# ── Elfos ────────────────────────────────────────────────────────────────────
+# Slim and tall; large filled triangular ears are the key identifier
 func _draw_elf(c: Color, dk: Color, s: float) -> void:
-	draw_circle(Vector2(0, -s * 0.62), s * 0.38, c)
-	draw_circle(Vector2(0, -s * 0.62), s * 0.38, dk, false, 1.0)
-	draw_line(Vector2(-s*0.34, -s*0.88), Vector2(-s*0.54, -s*1.18), c, 1.5)
-	draw_line(Vector2(s*0.34, -s*0.88),  Vector2(s*0.54, -s*1.18),  c, 1.5)
-	var body := PackedVector2Array([
-		Vector2(-s*0.28, -s*0.22), Vector2(s*0.28, -s*0.22),
-		Vector2(s*0.20, s*0.60),   Vector2(-s*0.20, s*0.60),
-	])
-	draw_colored_polygon(body, c)
-	draw_polyline(body, dk, 1.0)
+	# Slim torso
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.24, -s*0.18), Vector2(s*0.24, -s*0.18),
+		Vector2(s*0.17,  s*0.62),  Vector2(-s*0.17, s*0.62),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.24, -s*0.18), Vector2(s*0.24, -s*0.18),
+		Vector2(s*0.17,  s*0.62),  Vector2(-s*0.17, s*0.62),
+		Vector2(-s*0.24, -s*0.18),
+	]), dk, 1.0)
+	# Head
+	var hc := Vector2(0.0, -s*0.64)
+	draw_circle(hc, s*0.37, c)
+	draw_circle(hc, s*0.37, dk, false, 1.0)
+	# Big pointed ears (filled triangles)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.37, -s*0.76), Vector2(-s*0.37, -s*0.52),
+		Vector2(-s*0.76, -s*0.88),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.37, -s*0.76), Vector2(-s*0.37, -s*0.52),
+		Vector2(-s*0.76, -s*0.88), Vector2(-s*0.37, -s*0.76),
+	]), dk, 1.0)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(s*0.37, -s*0.76), Vector2(s*0.37, -s*0.52),
+		Vector2(s*0.76, -s*0.88),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(s*0.37, -s*0.76), Vector2(s*0.37, -s*0.52),
+		Vector2(s*0.76, -s*0.88), Vector2(s*0.37, -s*0.76),
+	]), dk, 1.0)
+	# Almond eyes (elongated)
+	draw_circle(hc + Vector2(-s*0.13, -s*0.04), s*0.08, dk)
+	draw_circle(hc + Vector2( s*0.13, -s*0.04), s*0.08, dk)
 
+# ── Enanos ────────────────────────────────────────────────────────────────────
+# Short and wide; iron helmet + big forked beard
 func _draw_dwarf(c: Color, dk: Color, s: float) -> void:
-	draw_circle(Vector2(0, -s * 0.48), s * 0.45, c)
-	draw_circle(Vector2(0, -s * 0.48), s * 0.45, dk, false, 1.0)
-	draw_circle(Vector2(0, -s * 0.05), s * 0.30, c.lightened(0.25))
-	var body := PackedVector2Array([
-		Vector2(-s*0.48, -s*0.10), Vector2(s*0.48, -s*0.10),
-		Vector2(s*0.44, s*0.52),   Vector2(-s*0.44, s*0.52),
-	])
-	draw_colored_polygon(body, c)
-	draw_polyline(body, dk, 1.0)
+	# Wide squat torso
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.52, -s*0.10), Vector2(s*0.52, -s*0.10),
+		Vector2(s*0.48,  s*0.52),  Vector2(-s*0.48, s*0.52),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.52, -s*0.10), Vector2(s*0.52, -s*0.10),
+		Vector2(s*0.48,  s*0.52),  Vector2(-s*0.48, s*0.52),
+		Vector2(-s*0.52, -s*0.10),
+	]), dk, 1.0)
+	# Head
+	var hc := Vector2(0.0, -s*0.46)
+	draw_circle(hc, s*0.42, c)
+	draw_circle(hc, s*0.42, dk, false, 1.0)
+	# Iron helmet (dome + brim)
+	var helm_c := c.darkened(0.35)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.44, -s*0.48), Vector2(s*0.44, -s*0.48),
+		Vector2(s*0.34,  -s*0.90), Vector2(-s*0.34, -s*0.90),
+	]), helm_c)
+	draw_rect(Rect2(-s*0.52, -s*0.50, s*1.04, s*0.14), helm_c.darkened(0.2))
+	# Beard (large forked triangle, lightened)
+	var beard_c := c.lightened(0.30)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.40, -s*0.08), Vector2(s*0.40, -s*0.08),
+		Vector2(s*0.34,  s*0.46),  Vector2(-s*0.34, s*0.46),
+	]), beard_c)
+	# Beard fork lines
+	draw_line(Vector2(0.0, s*0.15), Vector2(0.0, s*0.46), dk, 1.0)
+	# Eyes under helmet (small, determined)
+	draw_circle(hc + Vector2(-s*0.15, -s*0.02), s*0.08, dk)
+	draw_circle(hc + Vector2( s*0.15, -s*0.02), s*0.08, dk)
 
+# ── Orcos ─────────────────────────────────────────────────────────────────────
+# Big head, angry V-brow, prominent upward ivory tusks
 func _draw_orc(c: Color, dk: Color, s: float) -> void:
-	draw_circle(Vector2(0, -s * 0.52), s * 0.50, c)
-	draw_circle(Vector2(0, -s * 0.52), s * 0.50, dk, false, 1.0)
-	draw_line(Vector2(-s*0.22, -s*0.18), Vector2(-s*0.28, s*0.08), Color(0.95, 0.95, 0.85), 1.5)
-	draw_line(Vector2(s*0.22, -s*0.18),  Vector2(s*0.28, s*0.08),  Color(0.95, 0.95, 0.85), 1.5)
-	var body := PackedVector2Array([
-		Vector2(-s*0.46, -s*0.10), Vector2(s*0.46, -s*0.10),
-		Vector2(s*0.40, s*0.58),   Vector2(-s*0.40, s*0.58),
-	])
-	draw_colored_polygon(body, c)
-	draw_polyline(body, dk, 1.0)
+	# Wide brutish torso
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.52, -s*0.10), Vector2(s*0.52, -s*0.10),
+		Vector2(s*0.46,  s*0.60),  Vector2(-s*0.46, s*0.60),
+	]), c)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.52, -s*0.10), Vector2(s*0.52, -s*0.10),
+		Vector2(s*0.46,  s*0.60),  Vector2(-s*0.46, s*0.60),
+		Vector2(-s*0.52, -s*0.10),
+	]), dk, 1.5)
+	# Big head
+	var hc := Vector2(0.0, -s*0.54)
+	draw_circle(hc, s*0.52, c)
+	draw_circle(hc, s*0.52, dk, false, 1.5)
+	# Angry V-shaped brows
+	draw_line(hc + Vector2(-s*0.44, -s*0.16), hc + Vector2(-s*0.10, -s*0.28), dk, 2.5)
+	draw_line(hc + Vector2( s*0.44, -s*0.16), hc + Vector2( s*0.10, -s*0.28), dk, 2.5)
+	# Small mean eyes
+	draw_circle(hc + Vector2(-s*0.18, -s*0.08), s*0.10, dk)
+	draw_circle(hc + Vector2( s*0.18, -s*0.08), s*0.10, dk)
+	# Ivory tusks (upward from jaw)
+	var ivory := Color(0.96, 0.92, 0.78)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s*0.12, -s*0.08), Vector2(-s*0.26, -s*0.08),
+		Vector2(-s*0.22,  s*0.20),
+	]), ivory)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2( s*0.12, -s*0.08), Vector2( s*0.26, -s*0.08),
+		Vector2( s*0.22,  s*0.20),
+	]), ivory)
+	draw_polyline(PackedVector2Array([
+		Vector2(-s*0.12, -s*0.08), Vector2(-s*0.26, -s*0.08),
+		Vector2(-s*0.22,  s*0.20), Vector2(-s*0.12, -s*0.08),
+	]), dk, 0.8)
+	draw_polyline(PackedVector2Array([
+		Vector2( s*0.12, -s*0.08), Vector2( s*0.26, -s*0.08),
+		Vector2( s*0.22,  s*0.20), Vector2( s*0.12, -s*0.08),
+	]), dk, 0.8)
