@@ -11,6 +11,9 @@ var age_ticks := 0
 var combat_bonus := 1.0
 var defense_bonus := 1.0
 var evo_rate := 1.0
+var battles_won := 0
+var is_hero := false
+var hero_name := ""
 
 func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0) -> void:
 	grid_position = p_grid_position
@@ -100,6 +103,19 @@ func _draw() -> void:
 		"Orcos":    _draw_orc(c, dk, s)
 		_:
 			draw_circle(Vector2.ZERO, s, c)
+	if is_hero:
+		_draw_hero_marker(s)
+
+func _draw_hero_marker(s: float) -> void:
+	var gold := Color(1.0, 0.85, 0.20)
+	var tip := s * 1.55
+	var pts := PackedVector2Array()
+	for i in range(5):
+		var outer_a := deg_to_rad(-90.0 + i * 72.0)
+		var inner_a := deg_to_rad(-90.0 + i * 72.0 + 36.0)
+		pts.append(Vector2(cos(outer_a), sin(outer_a)) * s * 0.55 + Vector2(0, -tip))
+		pts.append(Vector2(cos(inner_a), sin(inner_a)) * s * 0.22 + Vector2(0, -tip))
+	draw_colored_polygon(pts, gold)
 
 func _draw_human(c: Color, dk: Color, s: float) -> void:
 	draw_circle(Vector2(0, -s * 0.62), s * 0.42, c)

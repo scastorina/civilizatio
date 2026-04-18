@@ -26,8 +26,13 @@ var _species_defense: Dictionary = {}
 var _species_tech: Dictionary = {}
 var _species_research: Dictionary = {}
 var _territory_names: Dictionary = {}
+var _chronicle: Array[String] = []
+var _chronicle_colors: Array[Color] = []
+var _known_kingdoms: Dictionary = {}
+var world_year := 0
 
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
+const CHRONICLE_MAX := 40
 
 var current_speed_idx := 1
 var current_map_idx := 0
@@ -61,6 +66,7 @@ func _process(delta: float) -> void:
 	var ticked := false
 	while move_tick_accumulator >= MOVE_TICK_SECONDS:
 		move_tick_accumulator -= MOVE_TICK_SECONDS
+		world_year += 1
 		_move_humans()
 		_update_evolution()
 		_resolve_combat()
@@ -113,6 +119,10 @@ func _regenerate_world() -> void:
 		_species_tech[n] = 0
 		_species_research[n] = 0.0
 	_territory_names.clear()
+	_chronicle.clear()
+	_chronicle_colors.clear()
+	_known_kingdoms.clear()
+	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
 	queue_redraw()
@@ -169,6 +179,11 @@ func _resolve_combat() -> void:
 			var chance := _conquest_chance(world_grid.get_structure(target)) * human.combat_bonus * tech_atk / (def_bonus * tech_def)
 			if rng.randf() < chance:
 				world_grid.set_owner(target, human.species_name)
+				human.battles_won += 1
+				if human.battles_won == 5 and not human.is_hero:
+					human.is_hero = true
+					human.hero_name = _generate_hero_name(human.species_name, human.battles_won ^ human.age_ticks ^ human.grid_position.x)
+					_log_event("Año %d: ¡%s se convirtió en leyenda de los %s!" % [world_year, human.hero_name, human.species_name], human.species_name)
 
 func _conquest_chance(structure: String) -> float:
 	match structure:
@@ -182,17 +197,32 @@ func _update_evolution() -> void:
 	for human in humans:
 		var cell := human.grid_position
 		human.update_evolution(world_grid.get_biome(cell))
+		var prev_structure := world_grid.get_structure(cell)
 		world_grid.tick_presence(cell, human.species_name)
 		if (_species_tech.get(human.species_name, 0) as int) >= 1:
 			world_grid.tick_presence(cell, human.species_name)
+		var new_structure := world_grid.get_structure(cell)
+		if new_structure != prev_structure:
+			match new_structure:
+				"camp":   _log_event("Año %d: Los %s establecieron un campamento" % [world_year, human.species_name], human.species_name)
+				"village":_log_event("Año %d: Los %s fundaron una aldea" % [world_year, human.species_name], human.species_name)
+				"town":   _log_event("Año %d: ¡Los %s erigieron una ciudad!" % [world_year, human.species_name], human.species_name)
 		match world_grid.get_structure(cell):
 			"village": human.evolution_score += 0.02
 			"town":    human.evolution_score += 0.05
 		if human.is_dead():
 			to_remove.append(human)
 	for dead in to_remove:
+		if dead.is_hero:
+			_log_event("Año %d: %s, héroe de los %s, ha caído" % [world_year, dead.hero_name, dead.species_name], dead.species_name)
 		humans.erase(dead)
 		dead.queue_free()
+	var living_after: Dictionary = {}
+	for h in humans:
+		living_after[h.species_name] = true
+	for dead2 in to_remove:
+		if not living_after.has(dead2.species_name):
+			_log_event("Año %d: ¡Los %s han sido erradicados del mundo!" % [world_year, dead2.species_name], dead2.species_name)
 	if humans.size() < MAX_HUMANS:
 		for human in humans.duplicate():
 			var repro_threshold := 10.0 if (_species_tech.get(human.species_name, 0) as int) >= 3 else 15.0
@@ -229,6 +259,34 @@ func _decay_dead_territories() -> void:
 				if rng.randf() < 0.03:
 					world_grid.set_owner(cell, "")
 
+func _log_event(text: String, species: String) -> void:
+	_chronicle.append(text)
+	_chronicle_colors.append(_species_colors.get(species, Color(0.8, 0.8, 0.8)) as Color)
+	if _chronicle.size() > CHRONICLE_MAX:
+		_chronicle.pop_front()
+		_chronicle_colors.pop_front()
+
+func _generate_hero_name(species: String, seed: int) -> String:
+	var h := seed & 0x7FFFFFFF
+	match species:
+		"Humanos":
+			var f: Array[String] = ["Rodrigo","Carlos","Isabel","Pedro","Alicia","Diego","Lucía","Marcos"]
+			var l: Array[String] = ["el Valiente","el Grande","la Sabia","el Conquistador","la Feroz","de Hierro"]
+			return f[h % f.size()] + " " + l[(h >> 3) % l.size()]
+		"Elfos":
+			var f: Array[String] = ["Aelindra","Silmor","Thalion","Galadwen","Ithilorn","Faelith","Mithwen"]
+			var l: Array[String] = ["el Eterno","la Luminosa","el Veloz","el Sabio","la Inmortal","del Bosque"]
+			return f[h % f.size()] + " " + l[(h >> 3) % l.size()]
+		"Enanos":
+			var f: Array[String] = ["Thordin","Bromkul","Kargdar","Durnok","Morbrak","Gorzum","Kazdul"]
+			var l: Array[String] = ["Mano de Piedra","el Férreo","Rompe-Montañas","el Forjador","Casco de Acero"]
+			return f[h % f.size()] + " " + l[(h >> 3) % l.size()]
+		"Orcos":
+			var f: Array[String] = ["Gromash","Urgak","Raktor","Skulgar","Vrukash","Zagmor","Drakul"]
+			var l: Array[String] = ["el Destructor","Sangre-Roja","el Imparable","el Salvaje","Rompe-Reinos"]
+			return f[h % f.size()] + " " + l[(h >> 3) % l.size()]
+	return "El Desconocido"
+
 func _update_technology() -> void:
 	var research_gain: Dictionary = {}
 	for human in humans:
@@ -241,6 +299,7 @@ func _update_technology() -> void:
 		var lvl: int = _species_tech.get(sp_name, 0) as int
 		if lvl < TECH_THRESHOLDS.size() and (_species_research[sp_name] as float) >= TECH_THRESHOLDS[lvl]:
 			_species_tech[sp_name] = lvl + 1
+			_log_event("Año %d: Los %s alcanzaron tecnología nivel %d" % [world_year, sp_name, lvl + 1], sp_name)
 
 func _draw() -> void:
 	for y in range(world_grid.height):
@@ -307,6 +366,39 @@ func _draw() -> void:
 	for line in stats:
 		draw_string(ThemeDB.fallback_font, Vector2(8, oy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
 		oy += 18.0
+
+	# Chronicle panel (top-right)
+	var cx0 := float(WORLD_WIDTH * TILE_SIZE) - 225.0
+	var visible_events := mini(_chronicle.size(), 18)
+	var ch := 22.0 + visible_events * 14.0 + 20.0
+	draw_rect(Rect2(cx0 - 4, 0, 229, ch), Color(0.04, 0.04, 0.08, 0.80))
+	draw_string(ThemeDB.fallback_font, Vector2(cx0, 14), "— CRÓNICA  Año %d —" % world_year,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.85, 0.78, 0.45))
+	var start_idx := maxi(0, _chronicle.size() - 18)
+	var cy := 28.0
+	for i in range(start_idx, _chronicle.size()):
+		var ec: Color = _chronicle_colors[i]
+		draw_string(ThemeDB.fallback_font, Vector2(cx0, cy), _chronicle[i],
+			HORIZONTAL_ALIGNMENT_LEFT, 220, 10, ec.lightened(0.2))
+		cy += 14.0
+
+	# Heroes panel (below chronicle)
+	var heroes: Array[Human] = []
+	for h in humans:
+		if h.is_hero:
+			heroes.append(h)
+	if not heroes.is_empty():
+		var hy := ch + 4.0
+		draw_rect(Rect2(cx0 - 4, hy, 229, 18.0 + heroes.size() * 14.0), Color(0.08, 0.06, 0.02, 0.82))
+		draw_string(ThemeDB.fallback_font, Vector2(cx0, hy + 13.0), "— HÉROES VIVOS —",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.85, 0.20))
+		var hcy := hy + 26.0
+		for hero in heroes:
+			var hc: Color = _species_colors.get(hero.species_name, Color.WHITE) as Color
+			draw_string(ThemeDB.fallback_font, Vector2(cx0, hcy),
+				"★ %s (%s) — %d batallas" % [hero.hero_name, hero.species_name, hero.battles_won],
+				HORIZONTAL_ALIGNMENT_LEFT, 220, 10, hc.lightened(0.3))
+			hcy += 14.0
 
 func _species_stats() -> Array[String]:
 	var result: Array[String] = []
