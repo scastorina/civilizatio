@@ -940,7 +940,9 @@ func _find_sea_path(start: Vector2i, goal: Vector2i, max_steps: int = 96) -> Arr
 		return []
 	var cache_key := _sea_path_key(start, goal)
 	if _sea_route_cache.has(cache_key):
-		return (_sea_route_cache[cache_key] as Array).duplicate()
+		var cached: Array[Vector2i] = []
+		cached.assign(_sea_route_cache[cache_key] as Array)
+		return cached
 	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	var queue: Array[Vector2i] = [start]
 	var visited := {start: true}
