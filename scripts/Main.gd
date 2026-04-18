@@ -60,6 +60,8 @@ var _relations: Dictionary = {}
 var _war_pairs: Dictionary = {}
 var _alliance_pairs: Dictionary = {}
 var _battle_markers: Array[Dictionary] = []
+var _settlement_cluster_cache: Array = []
+var _territory_cluster_cache: Array = []
 
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 const WorldEffectsScript = preload("res://scripts/WorldEffects.gd")
@@ -132,6 +134,9 @@ func _process(delta: float) -> void:
 	elif not _trade_routes.is_empty() or world_effects.has_active_visuals() or not _battle_markers.is_empty():
 		queue_redraw()
 
+	# Keep minimap camera indicator up to date every frame
+	_update_minimap_cam_rect()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if ui != null and ui.is_reply_input_focused():
@@ -189,6 +194,7 @@ func _apply_tool_at(pos: Vector2) -> void:
 			if (biome == "water" or biome == "mountain") and _has_human_in_cell(cell):
 				return
 			world_grid.set_biome(cell, biome)
+			_build_and_push_minimap()
 			queue_redraw()
 		"entities":
 			if world_grid.is_walkable(cell) and not _has_human_in_cell(cell):
@@ -222,7 +228,10 @@ func _regenerate_world() -> void:
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
+	_settlement_cluster_cache = _find_settlement_clusters()
+	_territory_cluster_cache  = _find_territory_clusters()
 	ui.set_chronicle_prompt("", false)
+	_build_and_push_minimap()
 	queue_redraw()
 
 func _spawn_initial_humans() -> void:
@@ -1136,64 +1145,6 @@ func _update_diplomacy() -> void:
 				_alliance_pairs.erase(key)
 				_log_event("Año %d: La alianza entre %s y %s se disuelve" % [world_year, a, b], a)
 
-func _update_trade() -> void:
-	var towns: Dictionary = {}
-	for y in range(world_grid.height):
-		for x in range(world_grid.width):
-			var cell := Vector2i(x, y)
-			if world_grid.get_structure(cell) == "town":
-				var owner := world_grid.get_owner(cell)
-				if owner != "":
-					if not towns.has(owner):
-						towns[owner] = []
-					(towns[owner] as Array).append(cell)
-
-	var new_routes: Array[Dictionary] = []
-	for species: String in towns.keys():
-		var sp_towns: Array = towns[species]
-		for i in sp_towns.size():
-			var best_dist := 999999.0
-			var best_j := -1
-			for j in sp_towns.size():
-				if j == i:
-					continue
-				var dist := (sp_towns[i] as Vector2i).distance_to(sp_towns[j] as Vector2i)
-				if dist < best_dist and dist < 35.0:
-					best_dist = dist
-					best_j = j
-			if best_j < 0:
-				continue
-			var a: Vector2i = sp_towns[i] as Vector2i
-			var b: Vector2i = sp_towns[best_j] as Vector2i
-			var already := false
-			for r: Dictionary in new_routes:
-				if (r["from"] == a and r["to"] == b) or (r["from"] == b and r["to"] == a):
-					already = true
-					break
-			if not already:
-				new_routes.append({"from": a, "to": b, "species": species})
-
-	for r: Dictionary in new_routes:
-		var existed := false
-		for old: Dictionary in _trade_routes:
-			if (old["from"] == r["from"] and old["to"] == r["to"]) or (old["from"] == r["to"] and old["to"] == r["from"]):
-				existed = true
-				break
-		if not existed:
-			_log_event("Año %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
-
-	_trade_routes = new_routes
-
-	var trade_towns: Dictionary = {}
-	for r: Dictionary in _trade_routes:
-		trade_towns[r["from"] as Vector2i] = true
-		trade_towns[r["to"] as Vector2i] = true
-	for human in humans:
-		for town_cell: Vector2i in trade_towns.keys():
-			if (human.grid_position - town_cell).length() <= 2.0:
-				human.evolution_score += 0.01
-				break
-
 func _update_trade_v2() -> void:
 	var towns: Dictionary = {}
 	var ports := _gather_ports()
@@ -1314,119 +1265,6 @@ func _apply_power_at(cell: Vector2i) -> void:
 	var power: String = GameUI.POWERS[ui.selected_power]
 	world_effects.apply_power(power, cell, world_grid, humans, world_year, Callable(self, "_log_event"))
 
-func _power_meteor(center: Vector2i) -> void:
-	_effects.append({"type": "impact", "cell": center, "age": 0, "max_age": 20})
-	_log_event("Año %d: ¡Un meteorito cayo del cielo!" % world_year, "")
-	for dy in range(-3, 4):
-		for dx in range(-3, 4):
-			var c := center + Vector2i(dx, dy)
-			if not world_grid.is_in_bounds(c):
-				continue
-			var dist := absf(float(dx)) + absf(float(dy))
-			if dist > 4:
-				continue
-			if world_grid.get_biome(c) != "water":
-				world_grid.set_biome(c, "sand")
-				world_grid.set_owner(c, "")
-			_fire_cells.erase(c)
-	for human in humans.duplicate():
-		if (human.grid_position - center).length() <= 3.5:
-			human.evolution_score = -50.0
-
-func _power_lightning(cell: Vector2i) -> void:
-	_effects.append({"type": "lightning", "cell": cell, "age": 0, "max_age": 8})
-	for human in humans.duplicate():
-		if human.grid_position == cell:
-			human.evolution_score = -50.0
-			return
-	if world_grid.get_structure(cell) != "":
-		world_grid.set_owner(cell, "")
-	elif world_grid.is_walkable(cell):
-		_fire_cells[cell] = 0
-
-func _power_fire(cell: Vector2i) -> void:
-	if world_grid.is_walkable(cell) and world_grid.get_biome(cell) != "sand":
-		_fire_cells[cell] = 0
-
-func _power_plague(center: Vector2i) -> void:
-	_log_event("Año %d: ¡Una plaga se extiende por las tierras!" % world_year, "")
-	for human in humans:
-		if (human.grid_position - center).length() <= 4.0:
-			human.infected = true
-
-func _power_rain(center: Vector2i) -> void:
-	_effects.append({"type": "rain", "cell": center, "age": 0, "max_age": 15})
-	for dy in range(-4, 5):
-		for dx in range(-4, 5):
-			var c := center + Vector2i(dx, dy)
-			_fire_cells.erase(c)
-	for human in humans:
-		if (human.grid_position - center).length() <= 4.0:
-			human.on_fire = false
-			human.evolution_score += 3.0
-
-func _power_blessing(center: Vector2i) -> void:
-	_effects.append({"type": "blessing", "cell": center, "age": 0, "max_age": 18})
-	_log_event("Año %d: Una bendicion divina ilumina la tierra" % world_year, "")
-	for human in humans:
-		if (human.grid_position - center).length() <= 3.0:
-			human.evolution_score += 10.0
-			human.infected = false
-
-func _tick_fire() -> void:
-	var dirs: Array[Vector2i] = [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
-	var new_fires: Array[Vector2i] = []
-	var to_erase: Array[Vector2i] = []
-	for cell: Vector2i in _fire_cells.keys():
-		_fire_cells[cell] = (_fire_cells[cell] as int) + 1
-		for human in humans:
-			if human.grid_position == cell:
-				human.on_fire = true
-		if (_fire_cells[cell] as int) > 40:
-			world_grid.set_owner(cell, "")
-			if world_grid.get_biome(cell) == "forest":
-				world_grid.set_biome(cell, "sand")
-			to_erase.append(cell)
-			continue
-		if rng.randf() < 0.08:
-			var d := dirs[rng.randi_range(0, 3)]
-			var nb := cell + d
-			if world_grid.is_in_bounds(nb) and world_grid.is_walkable(nb) and not _fire_cells.has(nb):
-				var b := world_grid.get_biome(nb)
-				var spread_chance := 0.6 if b == "forest" else (0.3 if b == "grass" else 0.1)
-				if rng.randf() < spread_chance:
-					new_fires.append(nb)
-	for cell in to_erase:
-		_fire_cells.erase(cell)
-	for cell in new_fires:
-		_fire_cells[cell] = 0
-	for human in humans:
-		if not _fire_cells.has(human.grid_position):
-			human.on_fire = false
-
-func _tick_plague() -> void:
-	var infected_positions: Array[Vector2i] = []
-	for human in humans:
-		if human.infected:
-			infected_positions.append(human.grid_position)
-	for human in humans:
-		if human.infected:
-			continue
-		for ipos in infected_positions:
-			if (human.grid_position - ipos).length() <= 1.5:
-				if rng.randf() < 0.04:
-					human.infected = true
-					break
-
-func _advance_effects() -> void:
-	var to_remove: Array[int] = []
-	for i in _effects.size():
-		_effects[i]["age"] = (_effects[i]["age"] as int) + 1
-		if (_effects[i]["age"] as int) >= (_effects[i]["max_age"] as int):
-			to_remove.append(i)
-	for i in range(to_remove.size() - 1, -1, -1):
-		_effects.remove_at(to_remove[i])
-
 func _draw() -> void:
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
@@ -1474,7 +1312,7 @@ func _draw() -> void:
 				"mine": _draw_mine(cx, cy, sc)
 				"dock": _draw_dock(cx, cy, sc)
 
-	for cluster in _find_settlement_clusters():
+	for cluster in _settlement_cluster_cache:
 		_draw_settlement_perimeter(cluster)
 
 	# Territory borders
@@ -1671,7 +1509,7 @@ func _draw() -> void:
 			_draw_religion_symbol(rx, ry, dom_rel)
 
 	# Territory labels
-	for cluster in _find_territory_clusters():
+	for cluster in _territory_cluster_cache:
 		var cpos: Vector2 = cluster["center"]
 		var sp: String   = cluster["species"]
 		var seed: String = cluster["seed"]
@@ -2172,6 +2010,13 @@ func _refresh_hud() -> void:
 	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year, advisory_prompt, not _active_advice.is_empty())
 	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty(), advisory_options)
 
+	# Update cluster caches (expensive operations, amortised once per tick)
+	_settlement_cluster_cache = _find_settlement_clusters()
+	_territory_cluster_cache  = _find_territory_clusters()
+
+	# Minimap pixel data
+	_build_and_push_minimap()
+
 func _has_human_in_cell(cell: Vector2i) -> bool:
 	for human in humans:
 		if human.grid_position == cell:
@@ -2199,3 +2044,41 @@ func _biome_color(biome: String) -> Color:
 		"forest":   return Color(0.10, 0.45, 0.15)
 		"mountain": return Color(0.45, 0.45, 0.45)
 		_:          return Color.WHITE
+
+# ── Minimap ──────────────────────────────────────────────────────────────────
+
+func _build_and_push_minimap() -> void:
+	var mw := WORLD_WIDTH
+	var mh := WORLD_HEIGHT
+	var pixels := PackedByteArray()
+	pixels.resize(mw * mh * 3)
+	var idx := 0
+	for y in range(mh):
+		for x in range(mw):
+			var cell := Vector2i(x, y)
+			var bc := _biome_color(world_grid.get_biome(cell))
+			var owner := world_grid.get_owner(cell)
+			if owner != "":
+				var sc := _species_colors.get(owner, Color.WHITE) as Color
+				bc = bc.lerp(sc, 0.42)
+			if world_effects.fire_cells.has(cell):
+				bc = Color(0.90, 0.38, 0.08)
+			var structure := world_grid.get_structure(cell)
+			if structure == "town":
+				bc = bc.lightened(0.30)
+			elif structure == "village":
+				bc = bc.lightened(0.16)
+			pixels[idx]     = int(bc.r8)
+			pixels[idx + 1] = int(bc.g8)
+			pixels[idx + 2] = int(bc.b8)
+			idx += 3
+	hud.update_minimap(pixels, mw, mh)
+
+func _update_minimap_cam_rect() -> void:
+	if hud == null or camera == null:
+		return
+	var vp := get_viewport_rect().size
+	var half := vp * 0.5 / camera.zoom.x
+	var top_left  := (camera.position - half) / TILE_SIZE
+	var bot_right := (camera.position + half) / TILE_SIZE
+	hud.update_minimap_camera(Rect2(top_left, bot_right - top_left))
