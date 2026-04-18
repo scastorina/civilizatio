@@ -5,7 +5,7 @@ const WORLD_WIDTH := 96
 const WORLD_HEIGHT := 54
 const HUMAN_COUNT := 20
 const MOVE_TICK_SECONDS := 0.35
-const BIOMES := ["water", "sand", "grass", "forest", "mountain"]
+const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain"]
 
 var rng := RandomNumberGenerator.new()
 var world_grid := WorldGrid.new(WORLD_WIDTH, WORLD_HEIGHT)
@@ -42,7 +42,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var cell := _mouse_to_cell(event.position)
 		if not world_grid.is_in_bounds(cell):
 			return
-		var biome := BIOMES[selected_biome_idx]
+		var biome: String = BIOMES[selected_biome_idx]
 		if (biome == "water" or biome == "mountain") and _has_human_in_cell(cell):
 			return
 		world_grid.set_biome(cell, biome)
