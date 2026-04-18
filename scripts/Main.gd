@@ -25,6 +25,8 @@ var _species_combat: Dictionary = {}
 var _species_defense: Dictionary = {}
 var _species_tech: Dictionary = {}
 var _species_research: Dictionary = {}
+var _species_resources: Dictionary = {}
+var _species_fleets: Dictionary = {}
 var _territory_names: Dictionary = {}
 var _chronicle: Array[String] = []
 var _chronicle_colors: Array[Color] = []
@@ -34,6 +36,7 @@ var world_year := 0
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
 const FORTIFICATION_NAMES: Array[String] = ["sin defensa", "valla de madera", "muralla de piedra", "bastion de hierro"]
+const RESOURCE_KEYS: Array[String] = ["food", "wood", "stone", "iron"]
 const SPECIES_RELIGIONS: Dictionary = {
 	"Humanos": "Fe Sagrada",
 	"Elfos":   "Sendero Eterno",
@@ -73,6 +76,8 @@ func _ready() -> void:
 		_species_defense[n] = sp["defense"] as float
 		_species_tech[n]    = 0
 		_species_research[n] = 0.0
+		_species_resources[n] = _make_resource_stock()
+		_species_fleets[n] = {"trade": 0, "war": 0}
 	camera = Camera2D.new()
 	camera.zoom = Vector2(2.0, 2.0)
 	camera.position = Vector2(WORLD_WIDTH * TILE_SIZE * 0.5, WORLD_HEIGHT * TILE_SIZE * 0.5)
@@ -104,6 +109,7 @@ func _process(delta: float) -> void:
 		world_year += 1
 		_move_humans()
 		_update_evolution()
+		_update_resources_and_fleets()
 		_resolve_combat()
 		_decay_dead_territories()
 		_update_technology()
@@ -188,6 +194,8 @@ func _regenerate_world() -> void:
 	for n: String in _species_tech.keys():
 		_species_tech[n] = 0
 		_species_research[n] = 0.0
+		_species_resources[n] = _make_resource_stock()
+		_species_fleets[n] = {"trade": 0, "war": 0}
 	_territory_names.clear()
 	_chronicle.clear()
 	_chronicle_colors.clear()
@@ -292,13 +300,16 @@ func _update_evolution() -> void:
 			world_grid.tick_presence(cell, human.species_name)
 		var new_structure := world_grid.get_structure(cell)
 		var new_fort := world_grid.update_fortification(cell, human.species_name, tech_level)
+		if new_fort > prev_fort and not _spend_resources(human.species_name, _fortification_cost(new_fort)):
+			world_grid.set_fortification(cell, prev_fort)
+			new_fort = prev_fort
 		if new_structure != prev_structure:
 			match new_structure:
 				"camp":   _log_event("Año %d: Los %s establecieron un campamento" % [world_year, human.species_name], human.species_name)
 				"village":_log_event("Año %d: Los %s fundaron una aldea" % [world_year, human.species_name], human.species_name)
 				"town":   _log_event("Año %d: ¡Los %s erigieron una ciudad!" % [world_year, human.species_name], human.species_name)
 		if new_fort > prev_fort:
-			_log_event("AÃ±o %d: Los %s levantaron %s" % [world_year, human.species_name, _fortification_name(new_fort)], human.species_name)
+			_log_event("Ano %d: Los %s levantaron %s" % [world_year, human.species_name, _fortification_name(new_fort)], human.species_name)
 		match world_grid.get_structure(cell):
 			"village": human.evolution_score += 0.02
 			"town":    human.evolution_score += 0.05
@@ -384,6 +395,122 @@ func _advance_battle_markers() -> void:
 			to_remove.append(i)
 	for i in range(to_remove.size() - 1, -1, -1):
 		_battle_markers.remove_at(to_remove[i])
+
+func _make_resource_stock() -> Dictionary:
+	return {
+		"food": 20.0,
+		"wood": 12.0,
+		"stone": 4.0,
+		"iron": 0.0,
+	}
+
+func _resource_stock(species: String) -> Dictionary:
+	if not _species_resources.has(species):
+		_species_resources[species] = _make_resource_stock()
+	return _species_resources[species] as Dictionary
+
+func _fleet_state(species: String) -> Dictionary:
+	if not _species_fleets.has(species):
+		_species_fleets[species] = {"trade": 0, "war": 0}
+	return _species_fleets[species] as Dictionary
+
+func _has_resources(species: String, cost: Dictionary) -> bool:
+	var stock := _resource_stock(species)
+	for key: String in cost.keys():
+		if (stock.get(key, 0.0) as float) < (cost[key] as float):
+			return false
+	return true
+
+func _spend_resources(species: String, cost: Dictionary) -> bool:
+	if not _has_resources(species, cost):
+		return false
+	var stock := _resource_stock(species)
+	for key: String in cost.keys():
+		stock[key] = (stock.get(key, 0.0) as float) - (cost[key] as float)
+	return true
+
+func _fortification_cost(level: int) -> Dictionary:
+	match level:
+		1: return {"wood": 8.0, "stone": 0.0, "iron": 0.0, "food": 0.0}
+		2: return {"wood": 4.0, "stone": 10.0, "iron": 0.0, "food": 0.0}
+		3: return {"wood": 2.0, "stone": 8.0, "iron": 8.0, "food": 0.0}
+		_: return {}
+
+func _ship_cost(mode: String) -> Dictionary:
+	if mode == "war":
+		return {"wood": 14.0, "stone": 0.0, "iron": 6.0, "food": 2.0}
+	return {"wood": 10.0, "stone": 0.0, "iron": 2.0, "food": 2.0}
+
+func _improvement_counts() -> Dictionary:
+	var counts: Dictionary = {}
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			var owner := world_grid.get_owner(cell)
+			if owner == "":
+				continue
+			if not counts.has(owner):
+				counts[owner] = {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "town": 0, "village": 0}
+			var c: Dictionary = counts[owner]
+			var improvement := world_grid.get_improvement(cell)
+			if improvement != "":
+				c[improvement] = (c.get(improvement, 0) as int) + 1
+			var biome := world_grid.get_biome(cell)
+			if biome == "forest":
+				c["forest"] = (c.get("forest", 0) as int) + 1
+			match world_grid.get_structure(cell):
+				"town":
+					c["town"] = (c.get("town", 0) as int) + 1
+				"village":
+					c["village"] = (c.get("village", 0) as int) + 1
+	return counts
+
+func _species_population_counts() -> Dictionary:
+	var counts: Dictionary = {}
+	for human in humans:
+		counts[human.species_name] = (counts.get(human.species_name, 0) as int) + 1
+	return counts
+
+func _update_resources_and_fleets() -> void:
+	var improvements := _improvement_counts()
+	var pops := _species_population_counts()
+	var ports := _gather_ports()
+	for sp: Dictionary in SPECIES_LIBRARY:
+		var name := sp["name"] as String
+		var stock := _resource_stock(name)
+		var fleet := _fleet_state(name)
+		var data: Dictionary = improvements.get(name, {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "town": 0, "village": 0})
+		var pop := pops.get(name, 0) as int
+		var tech := _species_tech.get(name, 0) as int
+		stock["food"] = (stock.get("food", 0.0) as float) + float(data.get("farm", 0) as int) * 1.6 + float(data.get("dock", 0) as int) * 0.25 - float(pop) * 0.22
+		stock["wood"] = (stock.get("wood", 0.0) as float) + float(data.get("forest", 0) as int) * 0.12 + float(data.get("housing", 0) as int) * 0.05 + float(data.get("dock", 0) as int) * 0.08
+		stock["stone"] = (stock.get("stone", 0.0) as float) + float(data.get("mine", 0) as int) * 0.55
+		if tech >= 2:
+			stock["iron"] = (stock.get("iron", 0.0) as float) + float(data.get("mine", 0) as int) * 0.28
+		else:
+			stock["iron"] = (stock.get("iron", 0.0) as float) + float(data.get("mine", 0) as int) * 0.08
+		for key: String in RESOURCE_KEYS:
+			stock[key] = clampf(stock.get(key, 0.0) as float, 0.0, 999.0)
+		if (stock.get("food", 0.0) as float) < 4.0 and pop > 0:
+			for human in humans:
+				if human.species_name == name:
+					human.evolution_score -= 0.03
+		var port_count := (ports.get(name, []) as Array).size()
+		var desired_trade := mini(port_count, 1 + tech)
+		while (fleet.get("trade", 0) as int) < desired_trade and _spend_resources(name, _ship_cost("trade")):
+			fleet["trade"] = (fleet.get("trade", 0) as int) + 1
+			_log_event("Ano %d: Los %s construyeron un mercante" % [world_year, name], name)
+		var in_war := false
+		for key: String in _war_pairs.keys():
+			if key.contains(name):
+				in_war = true
+				break
+		var desired_war := mini(port_count, 1 + tech) if in_war else 0
+		while (fleet.get("war", 0) as int) < desired_war and _spend_resources(name, _ship_cost("war")):
+			fleet["war"] = (fleet.get("war", 0) as int) + 1
+			_log_event("Ano %d: Los %s botaron una flota de guerra" % [world_year, name], name)
+		if not in_war:
+			fleet["war"] = maxi((fleet.get("war", 0) as int) - 1, 0)
 
 func _has_adjacent_biome(cell: Vector2i, biome: String) -> bool:
 	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -714,6 +841,9 @@ func _update_trade_v2() -> void:
 
 	for species: String in ports.keys():
 		var sp_ports: Array = ports[species]
+		var trade_fleets := (_fleet_state(species).get("trade", 0) as int)
+		if trade_fleets <= 0:
+			continue
 		for i in sp_ports.size():
 			var best_dist := 999999.0
 			var best_j := -1
@@ -749,7 +879,7 @@ func _update_trade_v2() -> void:
 			if r.get("mode", "land") == "sea":
 				_log_event("Ano %d: Los %s botaron una flota comercial" % [world_year, r["species"] as String], r["species"] as String)
 			else:
-				_log_event("AÃ±o %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
+				_log_event("Ano %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
 
 	_trade_routes = new_routes
 
@@ -1051,6 +1181,8 @@ func _draw() -> void:
 		var parts := war_key.split("|")
 		if parts.size() != 2:
 			continue
+		if (_fleet_state(parts[0]).get("war", 0) as int) <= 0 and (_fleet_state(parts[1]).get("war", 0) as int) <= 0:
+			continue
 		var a_ports: Array = ports_for_war.get(parts[0], [])
 		var b_ports: Array = ports_for_war.get(parts[1], [])
 		if a_ports.is_empty() or b_ports.is_empty():
@@ -1166,6 +1298,8 @@ func _species_stats() -> Array[String]:
 			stats[owner]["tiles"] += 1
 			if world_grid.get_structure(cell) != "":
 				stats[owner]["buildings"] += 1
+			if world_grid.get_improvement(cell) != "":
+				stats[owner]["buildings"] += 1
 	for sp_name: String in stats.keys():
 		var pop: int = stats[sp_name]["pop"]
 		var tiles: int = stats[sp_name]["tiles"]
@@ -1174,8 +1308,20 @@ func _species_stats() -> Array[String]:
 		var evo: float = stats[sp_name]["evo"] / maxf(float(pop), 1.0)
 		var buildings: int = stats[sp_name]["buildings"]
 		var tech: int = _species_tech.get(sp_name, 0) as int
+		var stock := _resource_stock(sp_name)
+		var fleets := _fleet_state(sp_name)
 		var dom_rel := _dominant_religion(sp_name)
 		var line := "%s: %d pop  %d terr  tec:%d  evo:%.1f" % [sp_name, pop, tiles, tech, evo]
+		line += "  f:%.0f m:%.0f p:%.0f h:%.0f" % [
+			stock.get("food", 0.0) as float,
+			stock.get("wood", 0.0) as float,
+			stock.get("stone", 0.0) as float,
+			stock.get("iron", 0.0) as float,
+		]
+		var trade_f := fleets.get("trade", 0) as int
+		var war_f := fleets.get("war", 0) as int
+		if trade_f > 0 or war_f > 0:
+			line += "  fl:%d/%d" % [trade_f, war_f]
 		if dom_rel != "" and dom_rel != (SPECIES_RELIGIONS.get(sp_name, "") as String):
 			line += "  [" + dom_rel + "]"
 		if pop == 0 and tiles > 0:

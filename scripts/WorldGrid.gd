@@ -90,6 +90,11 @@ func get_fortification(cell: Vector2i) -> int:
 		return 0
 	return _fortifications[cell.y][cell.x] as int
 
+func set_fortification(cell: Vector2i, level: int) -> void:
+	if not is_in_bounds(cell):
+		return
+	_fortifications[cell.y][cell.x] = max(level, 0)
+
 func update_fortification(cell: Vector2i, species: String, tech_level: int) -> int:
 	if not is_in_bounds(cell):
 		return 0
