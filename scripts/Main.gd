@@ -191,7 +191,7 @@ func _apply_tool_at(pos: Vector2) -> void:
 			world_grid.set_biome(cell, biome)
 			queue_redraw()
 		"entities":
-			if world_grid.is_walkable(cell) and not _has_human_in_cell(cell) and humans.size() < MAX_HUMANS:
+			if world_grid.is_walkable(cell) and not _has_human_in_cell(cell):
 				_spawn_human_at(cell, SPECIES_LIBRARY[ui.selected_species])
 				queue_redraw()
 		"powers":
@@ -1453,6 +1453,9 @@ func _draw() -> void:
 				"camp":    _draw_camp(cx, cy, sc)
 				"village": _draw_village(cx, cy, sc)
 				"town":    _draw_town(cx, cy, sc)
+			var fort_lvl := world_grid.get_fortification(cell)
+			if fort_lvl > 0:
+				_draw_fortification(cx, cy, fort_lvl, sc)
 
 	# Improvements around settlements
 	for y in range(world_grid.height):
@@ -1550,12 +1553,26 @@ func _draw() -> void:
 		draw_line(mid + Vector2(-3, -3), mid + Vector2(3, 3), Color(1.0, 0.95, 0.8, alpha_battle), 2.0)
 		draw_line(mid + Vector2(-3, 3), mid + Vector2(3, -3), Color(1.0, 0.95, 0.8, alpha_battle), 2.0)
 		if fort > 0:
-			draw_circle(b_pos, 4.5 + fort, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.18))
-			draw_arc(b_pos, 5.5 + fort, 0.0, TAU, 18, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.85), 1.5)
+			# Siege ring — pulsing shield around fortified defender
+			var siege_pulse := 0.6 + 0.4 * sin(float(Time.get_ticks_msec()) / 180.0 + float(to_cell.x * 7 + to_cell.y))
+			var siege_r := 6.5 + float(fort) * 2.0
+			draw_circle(b_pos, siege_r, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.14 * siege_pulse))
+			draw_arc(b_pos, siege_r, 0.0, TAU, 24, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.90), float(fort) * 0.8 + 1.0)
+			# Catapult arrow: attacker fires a projectile arc toward defender
+			var proj_t := fmod(float(Time.get_ticks_msec()) / 500.0, 1.0)
+			var proj_pos := a_pos.lerp(b_pos, proj_t)
+			var arc_offset := -sin(proj_t * PI) * 6.0
+			proj_pos.y += arc_offset
+			draw_circle(proj_pos, 1.8, Color(1.0, 0.65, 0.10, alpha_battle * 0.85))
 		if success:
-			draw_circle(mid, 2.6, Color(1.0, 0.45, 0.20, alpha_battle))
+			# Conquest flash
+			draw_circle(mid, 4.0, Color(1.0, 0.45, 0.20, alpha_battle))
+			draw_circle(b_pos, 3.0 * (1.0 - float(age) / float(max_age)), Color(1.0, 0.80, 0.20, alpha_battle * 0.7))
 		else:
 			draw_circle(mid, 2.0, Color(0.95, 0.95, 1.0, alpha_battle * 0.9))
+
+	# Army banners for war clusters
+	_draw_war_armies()
 
 	# Trade routes
 	var anim_t := fmod(float(Time.get_ticks_msec()) / 300.0, 1.0)
@@ -1665,6 +1682,79 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(cpos.x - tw * 0.5 + 3.0, cpos.y + 2.5),
 			name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, tc)
 
+
+func _draw_war_armies() -> void:
+	if _war_pairs.is_empty():
+		return
+	var at_war: Dictionary = {}
+	for key: String in _war_pairs.keys():
+		var parts := key.split("|")
+		if parts.size() == 2:
+			at_war[parts[0]] = true
+			at_war[parts[1]] = true
+
+	var sp_positions: Dictionary = {}
+	for human in humans:
+		if not at_war.has(human.species_name):
+			continue
+		if not sp_positions.has(human.species_name):
+			sp_positions[human.species_name] = []
+		(sp_positions[human.species_name] as Array).append(human.grid_position)
+
+	for sp: String in sp_positions.keys():
+		var positions: Array = sp_positions[sp]
+		var visited: Dictionary = {}
+		for pos: Vector2i in positions:
+			if visited.has(pos):
+				continue
+			var cluster: Array[Vector2i] = []
+			var queue: Array[Vector2i] = [pos]
+			while not queue.is_empty():
+				var cur: Vector2i = queue.pop_back()
+				if visited.has(cur):
+					continue
+				visited[cur] = true
+				cluster.append(cur)
+				for op: Vector2i in positions:
+					if not visited.has(op) and cur.distance_to(op) <= 4.0:
+						queue.push_back(op)
+			if cluster.size() < 3:
+				continue
+			var sx := 0; var sy := 0
+			for cp: Vector2i in cluster:
+				sx += cp.x; sy += cp.y
+			var centroid := Vector2(
+				(float(sx) / cluster.size() + 0.5) * TILE_SIZE,
+				(float(sy) / cluster.size() + 0.5) * TILE_SIZE
+			)
+			_draw_army_banner(centroid, sp, cluster.size())
+
+func _draw_army_banner(pos: Vector2, species: String, count: int) -> void:
+	var sc: Color = (_species_colors.get(species, Color.WHITE) as Color).lightened(0.05)
+	var pulse := 0.72 + 0.28 * sin(float(Time.get_ticks_msec()) / 380.0)
+	# Shadow
+	draw_circle(pos + Vector2(1, 1), 4.5, Color(0, 0, 0, 0.28))
+	# Pole
+	draw_line(pos + Vector2(0, 9), pos + Vector2(0, -10), Color(0.45, 0.32, 0.18, 0.95), 1.5)
+	# Flag waving
+	var wave := sin(float(Time.get_ticks_msec()) / 220.0) * 1.5
+	draw_colored_polygon(PackedVector2Array([
+		pos + Vector2(0,  -10),
+		pos + Vector2(9 + wave, -7 + wave * 0.4),
+		pos + Vector2(8 + wave, -4 + wave * 0.3),
+		pos + Vector2(0,  -4),
+	]), Color(sc.r, sc.g, sc.b, 0.88 * pulse))
+	draw_polyline(PackedVector2Array([
+		pos + Vector2(0, -10),
+		pos + Vector2(9 + wave, -7 + wave * 0.4),
+		pos + Vector2(8 + wave, -4 + wave * 0.3),
+		pos + Vector2(0, -4),
+	]), sc.darkened(0.3), 0.8)
+	# Unit dots below
+	var dot_n := mini(count, 9)
+	for i in dot_n:
+		var dx := (float(i) - float(dot_n - 1) * 0.5) * 3.5
+		draw_circle(pos + Vector2(dx, 12), 1.6, Color(sc.r, sc.g, sc.b, 0.80))
 
 func _draw_religion_symbol(cx: float, cy: float, religion: String) -> void:
 	match religion:
@@ -1867,29 +1957,78 @@ func _draw_settlement_perimeter(cluster: Dictionary) -> void:
 	var fort_level := cluster["fort"] as int
 	if fort_level <= 0:
 		return
-	var wall_color := Color(0.58, 0.36, 0.18)
-	var wall_width := 1.4
+	var species: String = cluster["species"] as String
+	var sp_color: Color = _species_colors.get(species, Color.WHITE) as Color
+	var wall_color := Color(0.58, 0.36, 0.18).lerp(sp_color, 0.20)
+	var wall_width := 2.2
+	var inner_color := wall_color.darkened(0.25)
 	match fort_level:
 		2:
-			wall_color = Color(0.68, 0.70, 0.74)
-			wall_width = 1.8
+			wall_color = Color(0.68, 0.70, 0.74).lerp(sp_color, 0.15)
+			inner_color = wall_color.darkened(0.30)
+			wall_width = 3.0
 		3:
-			wall_color = Color(0.52, 0.56, 0.62)
-			wall_width = 2.2
+			wall_color = Color(0.45, 0.50, 0.58).lerp(sp_color, 0.20)
+			inner_color = sp_color.lightened(0.15)
+			wall_width = 3.8
 	var cell_set := {}
 	for cell: Vector2i in cluster["cells"]:
 		cell_set[cell] = true
+
 	for cell: Vector2i in cluster["cells"]:
 		var px := float(cell.x * TILE_SIZE)
 		var py := float(cell.y * TILE_SIZE)
 		if not cell_set.has(cell + Vector2i(1, 0)):
 			draw_line(Vector2(px + TILE_SIZE, py), Vector2(px + TILE_SIZE, py + TILE_SIZE), wall_color, wall_width)
+			if fort_level >= 2:
+				draw_line(Vector2(px + TILE_SIZE - 1.5, py), Vector2(px + TILE_SIZE - 1.5, py + TILE_SIZE), inner_color, 1.0)
 		if not cell_set.has(cell + Vector2i(-1, 0)):
 			draw_line(Vector2(px, py), Vector2(px, py + TILE_SIZE), wall_color, wall_width)
+			if fort_level >= 2:
+				draw_line(Vector2(px + 1.5, py), Vector2(px + 1.5, py + TILE_SIZE), inner_color, 1.0)
 		if not cell_set.has(cell + Vector2i(0, 1)):
 			draw_line(Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), wall_color, wall_width)
+			if fort_level >= 2:
+				draw_line(Vector2(px, py + TILE_SIZE - 1.5), Vector2(px + TILE_SIZE, py + TILE_SIZE - 1.5), inner_color, 1.0)
 		if not cell_set.has(cell + Vector2i(0, -1)):
 			draw_line(Vector2(px, py), Vector2(px + TILE_SIZE, py), wall_color, wall_width)
+			if fort_level >= 2:
+				draw_line(Vector2(px, py + 1.5), Vector2(px + TILE_SIZE, py + 1.5), inner_color, 1.0)
+
+	# Corner towers for stone and iron walls
+	if fort_level >= 2:
+		var tower_r := 2.5 if fort_level == 2 else 3.5
+		var tower_c := wall_color.lightened(0.12)
+		for cell: Vector2i in cluster["cells"]:
+			for cdx in [0, 1]:
+				for cdy in [0, 1]:
+					var cx_i := cell.x + cdx
+					var cy_i := cell.y + cdy
+					# Count how many of the 4 tiles sharing this corner are in the set
+					var n := 0
+					for nx in [cx_i - 1, cx_i]:
+						for ny in [cy_i - 1, cy_i]:
+							if cell_set.has(Vector2i(nx, ny)):
+								n += 1
+					# Only draw at convex outer corners (exactly 1 tile from cluster)
+					if n == 1:
+						var wp := Vector2(float(cx_i * TILE_SIZE), float(cy_i * TILE_SIZE))
+						draw_circle(wp, tower_r, tower_c)
+						if fort_level == 3:
+							draw_circle(wp, tower_r * 0.55, sp_color.lightened(0.30))
+
+	# Battlements (crenellations) on top walls for iron level
+	if fort_level == 3:
+		var batt_c := sp_color.lightened(0.35)
+		for cell: Vector2i in cluster["cells"]:
+			if not cell_set.has(cell + Vector2i(0, -1)):
+				var px := float(cell.x * TILE_SIZE)
+				var py := float(cell.y * TILE_SIZE)
+				var step := 4.0
+				var bt := px
+				while bt < px + float(TILE_SIZE) - step:
+					draw_rect(Rect2(bt + 0.5, py - 3.0, step * 0.45, 3.0), batt_c)
+					bt += step
 
 func _draw_housing(cx: float, cy: float, sc: Color) -> void:
 	var base := Color(0.84, 0.78, 0.66)
