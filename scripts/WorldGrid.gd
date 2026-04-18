@@ -34,7 +34,6 @@ func generate_continents() -> void:
 	_tiles.clear()
 	var noise := FastNoiseLite.new()
 	noise.seed = _rng.randi()
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	noise.frequency = 0.04
 	noise.fractal_octaves = 4
 	noise.fractal_gain = 0.5
@@ -51,7 +50,6 @@ func generate_world() -> void:
 	_tiles.clear()
 	var elev := FastNoiseLite.new()
 	elev.seed = _rng.randi()
-	elev.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	elev.frequency = 0.025
 	elev.fractal_octaves = 5
 	elev.fractal_gain = 0.5
@@ -59,7 +57,6 @@ func generate_world() -> void:
 
 	var moisture := FastNoiseLite.new()
 	moisture.seed = _rng.randi()
-	moisture.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	moisture.frequency = 0.06
 	moisture.fractal_octaves = 3
 
