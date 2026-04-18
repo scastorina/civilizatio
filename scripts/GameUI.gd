@@ -6,6 +6,7 @@ signal species_selected(idx: int)
 signal time_speed_changed(idx: int)
 signal map_type_changed(idx: int)
 signal regenerate_requested()
+signal power_selected(idx: int)
 
 const BAR_H := 52
 const PANEL_H := 68
@@ -25,19 +26,33 @@ const BIOME_COLORS: Array[Color] = [
 
 var selected_biome := 2
 var selected_species := 0
+var selected_power := 0
 var current_speed_idx := 1
 var current_map_idx := 0
 var active_tab := "terrain"
 
+const POWERS: Array[String]       = ["meteor",  "lightning", "fire",   "plague", "rain",   "blessing"]
+const POWER_LABELS: Array[String] = ["Meteoro", "Rayo",      "Fuego",  "Plaga",  "Lluvia", "Bendicion"]
+const POWER_COLORS: Array[Color]  = [
+	Color(1.0, 0.35, 0.10),
+	Color(1.0, 0.95, 0.20),
+	Color(1.0, 0.50, 0.05),
+	Color(0.55, 0.90, 0.25),
+	Color(0.30, 0.65, 1.00),
+	Color(1.00, 0.88, 0.20),
+]
+
 var _tab_btns: Dictionary = {}
 var _biome_btns: Array[Button] = []
 var _species_btns: Array[Button] = []
+var _power_btns: Array[Button] = []
 var _speed_btns: Dictionary = {}
 var _map_btns: Dictionary = {}
 var _tool_panel: Panel
 var _terrain_content: Control
 var _entity_content: Control
 var _world_content: Control
+var _power_content: Control
 var _species_data: Array[Dictionary] = []
 
 func _ready() -> void:
@@ -68,6 +83,7 @@ func _build() -> void:
 	_build_terrain_content()
 	_build_entity_content()
 	_build_world_content()
+	_build_power_content()
 	_show_tab(active_tab)
 
 func _build_bar(bar: Panel) -> void:
@@ -78,6 +94,7 @@ func _build_bar(bar: Panel) -> void:
 		["terrain",  "Terreno",   Color(0.55, 0.85, 0.45)],
 		["entities", "Entidades", Color(0.95, 0.70, 0.40)],
 		["world",    "Mundo",     Color(0.45, 0.70, 0.95)],
+		["powers",   "Poderes",   Color(1.00, 0.50, 0.20)],
 	]
 	for td in tabs:
 		var btn := _make_tab_btn(td[1] as String, td[2] as Color)
@@ -188,10 +205,32 @@ func _build_world_content() -> void:
 
 	_refresh_map_highlights()
 
+func _build_power_content() -> void:
+	_power_content = Control.new()
+	_power_content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tool_panel.add_child(_power_content)
+
+	var x := float(PAD)
+	var yc := (PANEL_H - BTN) / 2.0
+	_content_label(_power_content, "PODER:", x, yc)
+	x += 62.0
+
+	for i in POWERS.size():
+		var btn := _make_power_btn(i)
+		btn.position = Vector2(x, yc)
+		_power_content.add_child(btn)
+		_power_btns.append(btn)
+		var pi: int = i
+		btn.pressed.connect(func(): _on_power(pi))
+		x += 76.0 + GAP
+
+	_refresh_power_highlights()
+
 func _show_tab(tab: String) -> void:
 	_terrain_content.visible = tab == "terrain"
 	_entity_content.visible = tab == "entities"
 	_world_content.visible = tab == "world"
+	_power_content.visible = tab == "powers"
 	_tool_panel.visible = true
 
 func _on_tab(tab: String) -> void:
@@ -221,6 +260,11 @@ func _on_map(idx: int) -> void:
 	current_map_idx = idx
 	_refresh_map_highlights()
 	map_type_changed.emit(idx)
+
+func _on_power(idx: int) -> void:
+	selected_power = idx
+	_refresh_power_highlights()
+	power_selected.emit(idx)
 
 func _refresh_tab_highlights() -> void:
 	for key in _tab_btns:
@@ -257,6 +301,28 @@ func _refresh_map_highlights() -> void:
 			_map_btns[key].add_theme_stylebox_override("normal", _style(Color(0.20, 0.20, 0.10), Color.YELLOW, 3))
 		else:
 			_map_btns[key].add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+
+func _refresh_power_highlights() -> void:
+	for i in _power_btns.size():
+		var c := POWER_COLORS[i]
+		if i == selected_power:
+			_power_btns[i].add_theme_stylebox_override("normal", _style(c.darkened(0.2), Color.YELLOW, 3))
+		else:
+			_power_btns[i].add_theme_stylebox_override("normal", _style(c.darkened(0.55), c, 2))
+
+func _make_power_btn(idx: int) -> Button:
+	var color := POWER_COLORS[idx]
+	var btn := Button.new()
+	btn.size = Vector2(76.0, BTN)
+	btn.text = POWER_LABELS[idx]
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", 12)
+	btn.add_theme_color_override("font_color", color.lightened(0.4))
+	btn.add_theme_color_override("font_color_hover", Color.WHITE)
+	btn.add_theme_stylebox_override("normal", _style(color.darkened(0.55), color, 2))
+	btn.add_theme_stylebox_override("hover", _style(color.darkened(0.3), Color.WHITE, 3))
+	btn.add_theme_stylebox_override("focus", _style(color.darkened(0.55), color, 2))
+	return btn
 
 func _make_biome_btn(idx: int) -> Button:
 	var color := BIOME_COLORS[idx]

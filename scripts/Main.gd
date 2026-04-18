@@ -41,6 +41,8 @@ var last_painted_cell := Vector2i(-1, -1)
 var _panning := false
 var _pan_origin := Vector2.ZERO
 var _cam_origin := Vector2.ZERO
+var _fire_cells: Dictionary = {}
+var _effects: Array[Dictionary] = []
 
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 
@@ -74,6 +76,7 @@ func _ready() -> void:
 	ui.time_speed_changed.connect(func(idx): current_speed_idx = idx)
 	ui.map_type_changed.connect(func(idx): current_map_idx = idx)
 	ui.regenerate_requested.connect(_regenerate_world)
+	ui.power_selected.connect(func(_idx): pass)
 	_regenerate_world()
 
 func _process(delta: float) -> void:
@@ -90,6 +93,9 @@ func _process(delta: float) -> void:
 		_resolve_combat()
 		_decay_dead_territories()
 		_update_technology()
+		_tick_fire()
+		_tick_plague()
+		_advance_effects()
 		ticked = true
 	if ticked:
 		queue_redraw()
@@ -155,6 +161,9 @@ func _apply_tool_at(pos: Vector2) -> void:
 			if world_grid.is_walkable(cell) and not _has_human_in_cell(cell) and humans.size() < MAX_HUMANS:
 				_spawn_human_at(cell, SPECIES_LIBRARY[ui.selected_species])
 				queue_redraw()
+		"powers":
+			_apply_power_at(cell)
+			queue_redraw()
 
 func _regenerate_world() -> void:
 	move_tick_accumulator = 0.0
@@ -165,6 +174,8 @@ func _regenerate_world() -> void:
 	_chronicle.clear()
 	_chronicle_colors.clear()
 	_known_kingdoms.clear()
+	_fire_cells.clear()
+	_effects.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
@@ -344,6 +355,129 @@ func _update_technology() -> void:
 			_species_tech[sp_name] = lvl + 1
 			_log_event("Año %d: Los %s alcanzaron tecnología nivel %d" % [world_year, sp_name, lvl + 1], sp_name)
 
+func _apply_power_at(cell: Vector2i) -> void:
+	var power: String = GameUI.POWERS[ui.selected_power]
+	match power:
+		"meteor":   _power_meteor(cell)
+		"lightning":_power_lightning(cell)
+		"fire":     _power_fire(cell)
+		"plague":   _power_plague(cell)
+		"rain":     _power_rain(cell)
+		"blessing": _power_blessing(cell)
+
+func _power_meteor(center: Vector2i) -> void:
+	_effects.append({"type": "impact", "cell": center, "age": 0, "max_age": 20})
+	_log_event("Año %d: ¡Un meteorito cayo del cielo!" % world_year, "")
+	for dy in range(-3, 4):
+		for dx in range(-3, 4):
+			var c := center + Vector2i(dx, dy)
+			if not world_grid.is_in_bounds(c):
+				continue
+			var dist := absf(float(dx)) + absf(float(dy))
+			if dist > 4:
+				continue
+			if world_grid.get_biome(c) != "water":
+				world_grid.set_biome(c, "sand")
+				world_grid.set_owner(c, "")
+			_fire_cells.erase(c)
+	for human in humans.duplicate():
+		if (human.grid_position - center).length() <= 3.5:
+			human.evolution_score = -50.0
+
+func _power_lightning(cell: Vector2i) -> void:
+	_effects.append({"type": "lightning", "cell": cell, "age": 0, "max_age": 8})
+	for human in humans.duplicate():
+		if human.grid_position == cell:
+			human.evolution_score = -50.0
+			return
+	if world_grid.get_structure(cell) != "":
+		world_grid.set_owner(cell, "")
+	elif world_grid.is_walkable(cell):
+		_fire_cells[cell] = 0
+
+func _power_fire(cell: Vector2i) -> void:
+	if world_grid.is_walkable(cell) and world_grid.get_biome(cell) != "sand":
+		_fire_cells[cell] = 0
+
+func _power_plague(center: Vector2i) -> void:
+	_log_event("Año %d: ¡Una plaga se extiende por las tierras!" % world_year, "")
+	for human in humans:
+		if (human.grid_position - center).length() <= 4.0:
+			human.infected = true
+
+func _power_rain(center: Vector2i) -> void:
+	_effects.append({"type": "rain", "cell": center, "age": 0, "max_age": 15})
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			var c := center + Vector2i(dx, dy)
+			_fire_cells.erase(c)
+	for human in humans:
+		if (human.grid_position - center).length() <= 4.0:
+			human.on_fire = false
+			human.evolution_score += 3.0
+
+func _power_blessing(center: Vector2i) -> void:
+	_effects.append({"type": "blessing", "cell": center, "age": 0, "max_age": 18})
+	_log_event("Año %d: Una bendicion divina ilumina la tierra" % world_year, "")
+	for human in humans:
+		if (human.grid_position - center).length() <= 3.0:
+			human.evolution_score += 10.0
+			human.infected = false
+
+func _tick_fire() -> void:
+	var dirs: Array[Vector2i] = [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
+	var new_fires: Array[Vector2i] = []
+	var to_erase: Array[Vector2i] = []
+	for cell: Vector2i in _fire_cells.keys():
+		_fire_cells[cell] = (_fire_cells[cell] as int) + 1
+		for human in humans:
+			if human.grid_position == cell:
+				human.on_fire = true
+		if (_fire_cells[cell] as int) > 40:
+			world_grid.set_owner(cell, "")
+			if world_grid.get_biome(cell) == "forest":
+				world_grid.set_biome(cell, "sand")
+			to_erase.append(cell)
+			continue
+		if rng.randf() < 0.08:
+			var d := dirs[rng.randi_range(0, 3)]
+			var nb := cell + d
+			if world_grid.is_in_bounds(nb) and world_grid.is_walkable(nb) and not _fire_cells.has(nb):
+				var b := world_grid.get_biome(nb)
+				var spread_chance := 0.6 if b == "forest" else (0.3 if b == "grass" else 0.1)
+				if rng.randf() < spread_chance:
+					new_fires.append(nb)
+	for cell in to_erase:
+		_fire_cells.erase(cell)
+	for cell in new_fires:
+		_fire_cells[cell] = 0
+	for human in humans:
+		if not _fire_cells.has(human.grid_position):
+			human.on_fire = false
+
+func _tick_plague() -> void:
+	var infected_positions: Array[Vector2i] = []
+	for human in humans:
+		if human.infected:
+			infected_positions.append(human.grid_position)
+	for human in humans:
+		if human.infected:
+			continue
+		for ipos in infected_positions:
+			if (human.grid_position - ipos).length() <= 1.5:
+				if rng.randf() < 0.04:
+					human.infected = true
+					break
+
+func _advance_effects() -> void:
+	var to_remove: Array[int] = []
+	for i in _effects.size():
+		_effects[i]["age"] = (_effects[i]["age"] as int) + 1
+		if (_effects[i]["age"] as int) >= (_effects[i]["max_age"] as int):
+			to_remove.append(i)
+	for i in range(to_remove.size() - 1, -1, -1):
+		_effects.remove_at(to_remove[i])
+
 func _draw() -> void:
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
@@ -388,6 +522,47 @@ func _draw() -> void:
 				draw_line(Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc, 1.5)
 			if world_grid.get_owner(Vector2i(x, y - 1)) != owner:
 				draw_line(Vector2(px, py), Vector2(px + TILE_SIZE, py), bc, 1.5)
+
+	# Fire overlay
+	for cell: Vector2i in _fire_cells.keys():
+		var ft: int = _fire_cells[cell] as int
+		var alpha := lerpf(0.85, 0.4, float(ft) / 40.0)
+		var fire_c := Color(1.0, 0.40 + rng.randf() * 0.2, 0.0, alpha)
+		draw_rect(Rect2(cell.x * TILE_SIZE, cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE), fire_c)
+		draw_rect(Rect2(cell.x * TILE_SIZE + 3, cell.y * TILE_SIZE - 2, TILE_SIZE - 6, 4), Color(1.0, 0.85, 0.0, alpha * 0.8))
+
+	# Special effects (impact, lightning, rain, blessing)
+	for eff: Dictionary in _effects:
+		var ec: Vector2i = eff["cell"] as Vector2i
+		var age: int = eff["age"] as int
+		var max_age: int = eff["max_age"] as int
+		var t := float(age) / float(max_age)
+		var cx := (ec.x + 0.5) * TILE_SIZE
+		var cy := (ec.y + 0.5) * TILE_SIZE
+		match eff["type"] as String:
+			"impact":
+				var radius := lerpf(2.0, float(TILE_SIZE) * 4.5, minf(t * 3.0, 1.0))
+				var ialpha := lerpf(1.0, 0.0, t)
+				draw_circle(Vector2(cx, cy), radius, Color(1.0, 0.85, 0.3, ialpha * 0.7))
+				draw_circle(Vector2(cx, cy), radius * 0.5, Color(1.0, 1.0, 1.0, ialpha * 0.5))
+			"lightning":
+				var lalpha := lerpf(1.0, 0.0, t)
+				var top := Vector2(cx, 0.0)
+				draw_line(top, Vector2(cx + 4, cy * 0.4), Color(1.0, 1.0, 0.5, lalpha), 2.0)
+				draw_line(Vector2(cx + 4, cy * 0.4), Vector2(cx - 3, cy * 0.7), Color(1.0, 1.0, 0.5, lalpha), 2.0)
+				draw_line(Vector2(cx - 3, cy * 0.7), Vector2(cx, cy), Color(1.0, 1.0, 1.0, lalpha), 3.0)
+			"rain":
+				var ralpha := lerpf(0.5, 0.0, t)
+				for di in range(-4, 5):
+					for dj in range(-4, 5):
+						var rx := cx + di * TILE_SIZE + rng.randf_range(-3, 3)
+						var ry := cy + dj * TILE_SIZE
+						draw_line(Vector2(rx, ry - 4), Vector2(rx - 1, ry + 2), Color(0.5, 0.75, 1.0, ralpha), 1.0)
+			"blessing":
+				var balpha := lerpf(0.7, 0.0, t)
+				var brad := lerpf(0.0, float(TILE_SIZE) * 3.5, t)
+				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.95, 0.3, balpha * 0.4))
+				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.9, 0.2, balpha * 0.6), false, 2.0)
 
 	# Territory labels
 	for cluster in _find_territory_clusters():

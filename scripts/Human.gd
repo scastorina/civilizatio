@@ -14,6 +14,8 @@ var evo_rate := 1.0
 var battles_won := 0
 var is_hero := false
 var hero_name := ""
+var infected := false
+var on_fire := false
 
 func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0) -> void:
 	grid_position = p_grid_position
@@ -82,6 +84,10 @@ func update_evolution(current_biome: String) -> void:
 		evolution_score += 0.03 * evo_rate
 	else:
 		evolution_score -= 0.01
+	if infected:
+		evolution_score -= 0.08
+	if on_fire:
+		evolution_score -= 0.20
 	evolution_score = clamp(evolution_score, -50.0, 200.0)
 
 func set_grid_position(next: Vector2i) -> void:
@@ -94,6 +100,10 @@ func _update_world_position() -> void:
 func _draw() -> void:
 	var health := clampf((evolution_score + 20.0) / 40.0, 0.0, 1.0)
 	var c := species_color.lerp(Color(0.4, 0.08, 0.08), 1.0 - health)
+	if infected:
+		c = c.lerp(Color(0.55, 0.90, 0.20), 0.55)
+	if on_fire:
+		c = c.lerp(Color(1.0, 0.35, 0.0), 0.70)
 	var dk := c.darkened(0.50)
 	var s := float(tile_size) * 0.42
 	match species_name:
