@@ -25,6 +25,7 @@ var _species_combat: Dictionary = {}
 var _species_defense: Dictionary = {}
 var _species_tech: Dictionary = {}
 var _species_research: Dictionary = {}
+var _territory_names: Dictionary = {}
 
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 
@@ -111,6 +112,7 @@ func _regenerate_world() -> void:
 	for n: String in _species_tech.keys():
 		_species_tech[n] = 0
 		_species_research[n] = 0.0
+	_territory_names.clear()
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
 	queue_redraw()
@@ -267,6 +269,36 @@ func _draw() -> void:
 				"village": _draw_village(cx, cy, sc)
 				"town":    _draw_town(cx, cy, sc)
 
+	# Territory borders
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var owner := world_grid.get_owner(Vector2i(x, y))
+			if owner == "":
+				continue
+			var bc: Color = (_species_colors.get(owner, Color.WHITE) as Color).lightened(0.35)
+			var px := float(x * TILE_SIZE)
+			var py := float(y * TILE_SIZE)
+			if world_grid.get_owner(Vector2i(x + 1, y)) != owner:
+				draw_line(Vector2(px + TILE_SIZE, py), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc, 1.5)
+			if world_grid.get_owner(Vector2i(x - 1, y)) != owner:
+				draw_line(Vector2(px, py), Vector2(px, py + TILE_SIZE), bc, 1.5)
+			if world_grid.get_owner(Vector2i(x, y + 1)) != owner:
+				draw_line(Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc, 1.5)
+			if world_grid.get_owner(Vector2i(x, y - 1)) != owner:
+				draw_line(Vector2(px, py), Vector2(px + TILE_SIZE, py), bc, 1.5)
+
+	# Territory labels
+	for cluster in _find_territory_clusters():
+		var cpos: Vector2 = cluster["center"]
+		var sp: String   = cluster["species"]
+		var seed: String = cluster["seed"]
+		var name := _territory_name(seed, sp)
+		var tc: Color = (_species_colors.get(sp, Color.WHITE) as Color).lightened(0.5)
+		var tw := float(name.length() * 6 + 6)
+		draw_rect(Rect2(cpos.x - tw * 0.5, cpos.y - 6.0, tw, 10.0), Color(0, 0, 0, 0.6))
+		draw_string(ThemeDB.fallback_font, Vector2(cpos.x - tw * 0.5 + 3.0, cpos.y + 2.5),
+			name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, tc)
+
 	# Species stats overlay (top-left)
 	var stats := _species_stats()
 	var overlay_h := 20.0 + stats.size() * 18.0
@@ -309,6 +341,73 @@ func _species_stats() -> Array[String]:
 	if result.is_empty():
 		result.append("Sin entidades — usa tab Entidades")
 	return result
+
+func _find_territory_clusters() -> Array:
+	var clusters: Array = []
+	var visited := {}
+	var dirs: Array[Vector2i] = [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var start := Vector2i(x, y)
+			if visited.has(start):
+				continue
+			var owner := world_grid.get_owner(start)
+			if owner == "":
+				visited[start] = true
+				continue
+			var queue: Array[Vector2i] = [start]
+			var cells: Array[Vector2i] = []
+			while not queue.is_empty():
+				var c: Vector2i = queue.pop_back()
+				if visited.has(c):
+					continue
+				if world_grid.get_owner(c) != owner:
+					continue
+				visited[c] = true
+				cells.append(c)
+				for d in dirs:
+					var nb := c + d
+					if world_grid.is_in_bounds(nb) and not visited.has(nb):
+						queue.push_back(nb)
+			if cells.size() < 18:
+				continue
+			var sx := 0; var sy := 0
+			for cc: Vector2i in cells:
+				sx += cc.x; sy += cc.y
+			var centroid := Vector2(
+				(float(sx) / cells.size() + 0.5) * TILE_SIZE,
+				(float(sy) / cells.size() + 0.5) * TILE_SIZE
+			)
+			var seed := "%s:%d:%d" % [owner, cells[0].x, cells[0].y]
+			clusters.append({"species": owner, "center": centroid, "seed": seed})
+	return clusters
+
+func _territory_name(seed: String, species: String) -> String:
+	if _territory_names.has(seed):
+		return _territory_names[seed]
+	var h := (seed.hash() & 0x7FFFFFFF)
+	var name := ""
+	match species:
+		"Humanos":
+			var p: Array[String] = ["Al","Val","Ar","Bel","Cal","Mar","San","Tor","Ros","Cas","Del","Mont"]
+			var s: Array[String] = ["oria","ania","ia","heim","grad","ton","burg","dor","vel","mar","zar"]
+			name = p[h % p.size()] + s[(h >> 4) % s.size()]
+		"Elfos":
+			var p: Array[String] = ["Ael","Sil","Thal","Mith","Gal","Erel","Fae","Ith","Lor","Nym"]
+			var s: Array[String] = ["ndir","ador","ithil","wen","dor","ath","ion","mel","riel","val"]
+			name = p[h % p.size()] + s[(h >> 4) % s.size()]
+		"Enanos":
+			var p: Array[String] = ["Thor","Brom","Durn","Karg","Mor","Gor","Dur","Kaz","Brak","Orm"]
+			var s: Array[String] = ["heim","dal","grad","dun","thak","rim","gor","kul","dok","bur"]
+			name = p[h % p.size()] + s[(h >> 4) % s.size()]
+		"Orcos":
+			var p: Array[String] = ["Gro","Ug","Rak","Mor","Gul","Zag","Krak","Druk","Skul","Vruk"]
+			var s: Array[String] = ["ash","gor","mak","thak","gruk","nash","zug","bul","kash","rok"]
+			name = p[h % p.size()] + s[(h >> 4) % s.size()]
+		_:
+			name = species
+	_territory_names[seed] = name
+	return name
 
 func _draw_camp(cx: float, cy: float, sc: Color) -> void:
 	var tent := PackedVector2Array([
