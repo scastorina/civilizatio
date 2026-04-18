@@ -85,6 +85,11 @@ func get_structure(cell: Vector2i) -> String:
 		return ""
 	return _structures[cell.y][cell.x]
 
+func set_structure(cell: Vector2i, structure: String) -> void:
+	if not is_in_bounds(cell):
+		return
+	_structures[cell.y][cell.x] = structure
+
 func get_fortification(cell: Vector2i) -> int:
 	if not is_in_bounds(cell):
 		return 0

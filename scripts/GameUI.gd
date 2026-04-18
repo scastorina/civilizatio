@@ -7,6 +7,7 @@ signal time_speed_changed(idx: int)
 signal map_type_changed(idx: int)
 signal regenerate_requested()
 signal power_selected(idx: int)
+signal chronicle_reply_submitted(text: String)
 
 const BAR_H := 52
 const PANEL_H := 68
@@ -54,6 +55,8 @@ var _entity_content: Control
 var _world_content: Control
 var _power_content: Control
 var _species_data: Array[Dictionary] = []
+var _chronicle_prompt_label: Label
+var _chronicle_input: LineEdit
 
 func _ready() -> void:
 	layer = 10
@@ -131,6 +134,24 @@ func _build_bar(bar: Panel) -> void:
 	regen.size.x = BTN + 20.0
 	bar.add_child(regen)
 	regen.pressed.connect(func(): regenerate_requested.emit())
+
+	_chronicle_prompt_label = Label.new()
+	_chronicle_prompt_label.position = Vector2(x + 92.0, yc + 2.0)
+	_chronicle_prompt_label.size = Vector2(220.0, 18.0)
+	_chronicle_prompt_label.text = "Consejo:"
+	_chronicle_prompt_label.add_theme_font_size_override("font_size", 11)
+	_chronicle_prompt_label.add_theme_color_override("font_color", Color(0.85, 0.78, 0.46))
+	bar.add_child(_chronicle_prompt_label)
+
+	_chronicle_input = LineEdit.new()
+	_chronicle_input.position = Vector2(x + 92.0, yc + 20.0)
+	_chronicle_input.size = Vector2(260.0, 24.0)
+	_chronicle_input.placeholder_text = "Responde aqui si la cronica pide consejo"
+	_chronicle_input.max_length = 32
+	_chronicle_input.editable = false
+	_chronicle_input.add_theme_font_size_override("font_size", 12)
+	_chronicle_input.text_submitted.connect(_on_chronicle_reply_submitted)
+	bar.add_child(_chronicle_input)
 
 	_refresh_speed_highlights()
 	_refresh_tab_highlights()
@@ -265,6 +286,26 @@ func _on_power(idx: int) -> void:
 	selected_power = idx
 	_refresh_power_highlights()
 	power_selected.emit(idx)
+
+func _on_chronicle_reply_submitted(text: String) -> void:
+	var cleaned := text.strip_edges()
+	if cleaned == "":
+		return
+	chronicle_reply_submitted.emit(cleaned)
+	_chronicle_input.clear()
+
+func set_chronicle_prompt(text: String, waiting: bool) -> void:
+	if _chronicle_prompt_label == null or _chronicle_input == null:
+		return
+	_chronicle_prompt_label.text = text if waiting else "Consejo:"
+	_chronicle_input.editable = waiting
+	_chronicle_input.placeholder_text = "Responde aqui" if waiting else "La simulacion sigue aunque no respondas"
+	if not waiting:
+		_chronicle_input.release_focus()
+		_chronicle_input.clear()
+
+func is_reply_input_focused() -> bool:
+	return _chronicle_input != null and _chronicle_input.has_focus()
 
 func _refresh_tab_highlights() -> void:
 	for key in _tab_btns:

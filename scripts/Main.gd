@@ -27,11 +27,15 @@ var _species_tech: Dictionary = {}
 var _species_research: Dictionary = {}
 var _species_resources: Dictionary = {}
 var _species_fleets: Dictionary = {}
+var _species_pressures: Dictionary = {}
 var _territory_names: Dictionary = {}
 var _chronicle: Array[String] = []
 var _chronicle_colors: Array[Color] = []
 var _known_kingdoms: Dictionary = {}
 var world_year := 0
+var _active_advice: Dictionary = {}
+var _next_advice_year := 16
+var _sea_route_cache: Dictionary = {}
 
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
@@ -78,6 +82,7 @@ func _ready() -> void:
 		_species_research[n] = 0.0
 		_species_resources[n] = _make_resource_stock()
 		_species_fleets[n] = {"trade": 0, "war": 0}
+		_species_pressures[n] = _make_pressure_state()
 	camera = Camera2D.new()
 	camera.zoom = Vector2(2.0, 2.0)
 	camera.position = Vector2(WORLD_WIDTH * TILE_SIZE * 0.5, WORLD_HEIGHT * TILE_SIZE * 0.5)
@@ -96,6 +101,7 @@ func _ready() -> void:
 	ui.map_type_changed.connect(func(idx): current_map_idx = idx)
 	ui.regenerate_requested.connect(_regenerate_world)
 	ui.power_selected.connect(func(_idx): pass)
+	ui.chronicle_reply_submitted.connect(_on_chronicle_reply_submitted)
 	_regenerate_world()
 
 func _process(delta: float) -> void:
@@ -117,6 +123,7 @@ func _process(delta: float) -> void:
 		_update_trade_v2()
 		_update_religions()
 		_update_diplomacy()
+		_update_chronicle_advice()
 		_advance_battle_markers()
 		ticked = true
 	if ticked:
@@ -127,6 +134,8 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
+		if ui != null and ui.is_reply_input_focused():
+			return
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			_regenerate_world()
 			return
@@ -196,6 +205,7 @@ func _regenerate_world() -> void:
 		_species_research[n] = 0.0
 		_species_resources[n] = _make_resource_stock()
 		_species_fleets[n] = {"trade": 0, "war": 0}
+		_species_pressures[n] = _make_pressure_state()
 	_territory_names.clear()
 	_chronicle.clear()
 	_chronicle_colors.clear()
@@ -206,9 +216,13 @@ func _regenerate_world() -> void:
 	_war_pairs.clear()
 	_alliance_pairs.clear()
 	_battle_markers.clear()
+	_active_advice.clear()
+	_next_advice_year = 16
+	_sea_route_cache.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
+	ui.set_chronicle_prompt("", false)
 	queue_redraw()
 
 func _spawn_initial_humans() -> void:
@@ -330,8 +344,12 @@ func _update_evolution() -> void:
 	if humans.size() < MAX_HUMANS:
 		for human in humans.duplicate():
 			var repro_threshold := 10.0 if (_species_tech.get(human.species_name, 0) as int) >= 3 else 15.0
+			var pressure_state := _species_pressures.get(human.species_name, _make_pressure_state()) as Dictionary
+			if (pressure_state.get("starving", false) as bool) or (pressure_state.get("capacity_left", 0) as int) <= 0:
+				continue
 			if human.evolution_score > repro_threshold and humans.size() < MAX_HUMANS:
-				if rng.randf() < 0.01:
+				var reproduction_chance := 0.01 * clampf(1.0 - (pressure_state.get("pressure", 0.0) as float) * 0.75, 0.2, 1.0)
+				if rng.randf() < reproduction_chance:
 					_try_reproduce(human)
 
 func _try_reproduce(parent: Human) -> void:
@@ -363,8 +381,32 @@ func _decay_dead_territories() -> void:
 				if rng.randf() < 0.03:
 					world_grid.set_owner(cell, "")
 
-func _log_event(text: String, species: String) -> void:
-	_chronicle.append(text)
+func _event_flavor(species: String, text: String) -> String:
+	var lower := text.to_lower()
+	if lower.contains("guerra"):
+		return "Los exploradores advierten que las fronteras tiemblan y los arsenales empiezan a vaciarse."
+	if lower.contains("tregua") or lower.contains("alianza"):
+		return "Los mercados respiran y los ancianos creen que el equilibrio puede durar unos pocos anos mas."
+	if lower.contains("ciudad") or lower.contains("aldea") or lower.contains("campamento"):
+		return "Nuevos hogares, talleres y hornos cambian el pulso del territorio."
+	if lower.contains("mercante") or lower.contains("ruta comercial") or lower.contains("puerto"):
+		return "La riqueza depende ahora de mantener costas seguras y mares abiertos."
+	if lower.contains("hambre") or lower.contains("crisis") or lower.contains("colapsar"):
+		return "Los graneros se vacian y la gente exige decisiones antes de abandonar las calles."
+	if lower.contains("tecnolog"):
+		return "Los artesanos convierten ideas en herramientas y eso altera el equilibrio con sus vecinos."
+	if lower.contains("defensa") or lower.contains("muralla") or lower.contains("valla") or lower.contains("bastion"):
+		return "Cada piedra levantada protege vidas, pero tambien consume recursos que faltan en otros barrios."
+	if species != "":
+		return "Los cronistas de los %s juran que este cambio marcara una nueva etapa para su pueblo." % species
+	return "Los cronistas anotan el suceso mientras el mundo sigue girando sin esperar respuesta."
+
+func _log_event(text: String, species: String, detail: String = "") -> void:
+	var entry := text
+	var extra := detail if detail != "" else _event_flavor(species, text)
+	if extra != "":
+		entry += " " + extra
+	_chronicle.append(entry)
 	_chronicle_colors.append(_species_colors.get(species, Color(0.8, 0.8, 0.8)) as Color)
 	if _chronicle.size() > CHRONICLE_MAX:
 		_chronicle.pop_front()
@@ -372,6 +414,117 @@ func _log_event(text: String, species: String) -> void:
 
 func _fortification_name(level: int) -> String:
 	return FORTIFICATION_NAMES[clampi(level, 0, FORTIFICATION_NAMES.size() - 1)]
+
+func _offer_advice(topic: String, species: String, prompt: String, expires_in: int = 18) -> void:
+	if not _active_advice.is_empty():
+		return
+	_active_advice = {
+		"topic": topic,
+		"species": species,
+		"prompt": prompt,
+		"expires": world_year + expires_in,
+	}
+	_next_advice_year = world_year + expires_in + 24
+	_log_event("Ano %d: El consejo de los %s pide audiencia" % [world_year, species], species, prompt)
+
+func _update_chronicle_advice() -> void:
+	if not _active_advice.is_empty():
+		if world_year >= (_active_advice.get("expires", world_year + 1) as int):
+			var sp := _active_advice.get("species", "") as String
+			_log_event("Ano %d: Nadie respondio al consejo de los %s" % [world_year, sp], sp, "El mundo siguio avanzando y las decisiones quedaron en manos de la inercia.")
+			_active_advice.clear()
+		return
+	if world_year < _next_advice_year:
+		return
+	for sp: String in _species_pressures.keys():
+		var state := _species_pressures.get(sp, {}) as Dictionary
+		if (state.get("starving", false) as bool) and (state.get("capacity", 0) as int) > 0:
+			_offer_advice("food", sp, "Falta comida en %s. Responde corto: grano, racion o migrar." % sp)
+			return
+	for key: String in _war_pairs.keys():
+		var parts := key.split("|")
+		if parts.size() == 2:
+			_offer_advice("war", parts[0], "La guerra crece entre %s y %s. Responde: muro, paz o saqueo." % [parts[0], parts[1]])
+			return
+	for species: String in _species_fleets.keys():
+		var fleet := _fleet_state(species)
+		var ports := _gather_ports().get(species, []) as Array
+		if (fleet.get("trade", 0) as int) > 0 and ports.size() >= 2:
+			var sea_routes := 0
+			for route: Dictionary in _trade_routes:
+				if route.get("mode", "land") == "sea" and route.get("species", "") == species:
+					sea_routes += 1
+			if sea_routes == 0:
+				_offer_advice("port", species, "Los puertos de %s quedaron aislados. Responde: puerto, costa o flota." % species)
+				return
+
+func _on_chronicle_reply_submitted(text: String) -> void:
+	if _active_advice.is_empty():
+		_log_event("Ano %d: Llegaron palabras tardias al salon del consejo" % world_year, "", "El mensaje no encontro una consulta abierta, pero los escribas lo archivaron igualmente.")
+		return
+	var answer := text.to_lower().strip_edges()
+	var topic := _active_advice.get("topic", "") as String
+	var species := _active_advice.get("species", "") as String
+	var resolved := false
+	match topic:
+		"food":
+			if answer.contains("grano") or answer.contains("comida") or answer.contains("campo"):
+				var stock := _resource_stock(species)
+				stock["food"] = (stock.get("food", 0.0) as float) + 14.0
+				_log_event("Ano %d: El consejo ordena sembrar mas para los %s" % [world_year, species], species, "Se abren nuevos graneros y los campesinos reciben prioridad sobre otras obras.")
+				resolved = true
+			elif answer.contains("racion"):
+				for human in humans:
+					if human.species_name == species:
+						human.evolution_score += 1.2
+				_log_event("Ano %d: Los %s aceptan racionamiento" % [world_year, species], species, "La disciplina evita un colapso inmediato, aunque el pueblo murmura en las plazas.")
+				resolved = true
+			elif answer.contains("migr"):
+				for human in humans:
+					if human.species_name == species:
+						human.evolution_score += 0.5
+				_log_event("Ano %d: Los %s impulsan migraciones hacia nuevas tierras" % [world_year, species], species, "Las familias buscan valles menos saturados y el centro urbano gana un respiro.")
+				resolved = true
+		"war":
+			if answer.contains("muro") or answer.contains("defen"):
+				var stock := _resource_stock(species)
+				stock["stone"] = (stock.get("stone", 0.0) as float) + 8.0
+				stock["wood"] = (stock.get("wood", 0.0) as float) + 6.0
+				_log_event("Ano %d: Los %s priorizan murallas y reservas" % [world_year, species], species, "Los maestros de obra reciben recursos extra y las ciudades se preparan para un asedio largo.")
+				resolved = true
+			elif answer.contains("paz") or answer.contains("trato"):
+				for key: String in _war_pairs.keys():
+					if key.contains(species):
+						var parts := key.split("|")
+						if parts.size() == 2:
+							_set_relation(parts[0], parts[1], _get_relation(parts[0], parts[1]) + 0.20)
+				_log_event("Ano %d: Los %s envian emisarios de paz" % [world_year, species], species, "No garantiza tregua inmediata, pero enfria el deseo de seguir perdiendo sangre.")
+				resolved = true
+			elif answer.contains("saque") or answer.contains("flota"):
+				var fleet := _fleet_state(species)
+				fleet["war"] = (fleet.get("war", 0) as int) + 1
+				_log_event("Ano %d: Los %s redoblan la presion militar" % [world_year, species], species, "Los capitanes reciben permiso para hostigar rutas enemigas y acelerar la guerra.")
+				resolved = true
+		"port":
+			if answer.contains("puerto") or answer.contains("muelle"):
+				var stock := _resource_stock(species)
+				stock["wood"] = (stock.get("wood", 0.0) as float) + 10.0
+				_log_event("Ano %d: Los %s expanden sus muelles" % [world_year, species], species, "Los carpinteros buscan una costa mejor conectada para abrir la siguiente ruta comercial.")
+				resolved = true
+			elif answer.contains("costa") or answer.contains("territ"):
+				for human in humans:
+					if human.species_name == species:
+						human.evolution_score += 0.8
+				_log_event("Ano %d: Los %s son empujados hacia la costa" % [world_year, species], species, "Las patrullas buscan ensenadas y deltas donde fundar puertos menos encerrados.")
+				resolved = true
+			elif answer.contains("flota") or answer.contains("barco"):
+				var fleet := _fleet_state(species)
+				fleet["trade"] = (fleet.get("trade", 0) as int) + 1
+				_log_event("Ano %d: Los %s construyen naves para explorar nuevas rutas" % [world_year, species], species, "Los astilleros prueban caminos mas largos en busca de agua abierta y puertos aliados.")
+				resolved = true
+	if not resolved:
+		_log_event("Ano %d: El consejo recibe una respuesta ambigua: '%s'" % [world_year, text], species, "Los asesores toman nota, pero la orden no cambia el rumbo de inmediato.")
+	_active_advice.clear()
 
 func _record_battle_marker(from_cell: Vector2i, to_cell: Vector2i, attacker: String, defender: String, success: bool, fort_level: int) -> void:
 	_battle_markers.append({
@@ -402,6 +555,17 @@ func _make_resource_stock() -> Dictionary:
 		"wood": 12.0,
 		"stone": 4.0,
 		"iron": 0.0,
+	}
+
+func _make_pressure_state() -> Dictionary:
+	return {
+		"capacity": 0,
+		"capacity_left": 0,
+		"food_balance": 0.0,
+		"food": 0.0,
+		"pressure": 0.0,
+		"starving": false,
+		"overcrowding": 0,
 	}
 
 func _resource_stock(species: String) -> Dictionary:
@@ -441,6 +605,27 @@ func _ship_cost(mode: String) -> Dictionary:
 		return {"wood": 14.0, "stone": 0.0, "iron": 6.0, "food": 2.0}
 	return {"wood": 10.0, "stone": 0.0, "iron": 2.0, "food": 2.0}
 
+func _settlement_capacity(data: Dictionary, tech: int) -> int:
+	var capacity := 6
+	capacity += (data.get("camp", 0) as int) * 6
+	capacity += (data.get("village", 0) as int) * 14
+	capacity += (data.get("town", 0) as int) * 28
+	capacity += (data.get("housing", 0) as int) * 5
+	capacity += (data.get("farm", 0) as int) * 2
+	capacity += (data.get("dock", 0) as int) * 3
+	capacity += tech * 4
+	return capacity
+
+func _downgraded_structure(structure: String) -> String:
+	match structure:
+		"town":
+			return "village"
+		"village":
+			return "camp"
+		"camp":
+			return ""
+	return structure
+
 func _improvement_counts() -> Dictionary:
 	var counts: Dictionary = {}
 	for y in range(world_grid.height):
@@ -450,7 +635,7 @@ func _improvement_counts() -> Dictionary:
 			if owner == "":
 				continue
 			if not counts.has(owner):
-				counts[owner] = {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "town": 0, "village": 0}
+				counts[owner] = {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "camp": 0, "town": 0, "village": 0}
 			var c: Dictionary = counts[owner]
 			var improvement := world_grid.get_improvement(cell)
 			if improvement != "":
@@ -459,6 +644,8 @@ func _improvement_counts() -> Dictionary:
 			if biome == "forest":
 				c["forest"] = (c.get("forest", 0) as int) + 1
 			match world_grid.get_structure(cell):
+				"camp":
+					c["camp"] = (c.get("camp", 0) as int) + 1
 				"town":
 					c["town"] = (c.get("town", 0) as int) + 1
 				"village":
@@ -471,6 +658,127 @@ func _species_population_counts() -> Dictionary:
 		counts[human.species_name] = (counts.get(human.species_name, 0) as int) + 1
 	return counts
 
+func _apply_famine_losses(species: String, count: int) -> void:
+	var losses := 0
+	var chosen := {}
+	for _i in range(count):
+		var target: Human = null
+		var worst_score := 999999.0
+		for human in humans:
+			if human.species_name != species:
+				continue
+			if chosen.has(human):
+				continue
+			var score := human.evolution_score + float(human.age_ticks) * 0.004
+			if score < worst_score:
+				worst_score = score
+				target = human
+		if target == null:
+			break
+		chosen[target] = true
+		target.evolution_score = -25.0
+		losses += 1
+	if losses > 0:
+		_log_event("Ano %d: El hambre golpea a los %s y mueren %d habitantes" % [world_year, species, losses], species)
+
+func _apply_settlement_collapse(species: String, severity: float) -> bool:
+	var best_improvement := Vector2i(-1, -1)
+	var best_improvement_score := -1
+	var best_fort := Vector2i(-1, -1)
+	var best_fort_score := -1
+	var best_structure := Vector2i(-1, -1)
+	var best_structure_score := -1
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			if world_grid.get_owner(cell) != species:
+				continue
+			var structure := world_grid.get_structure(cell)
+			var improvement := world_grid.get_improvement(cell)
+			var fort := world_grid.get_fortification(cell)
+			if improvement != "":
+				var improvement_score := 0
+				match improvement:
+					"farm":
+						improvement_score = 5
+					"housing":
+						improvement_score = 4
+					"dock":
+						improvement_score = 3
+					"mine":
+						improvement_score = 2
+					_:
+						improvement_score = 1
+				if structure == "":
+					improvement_score += 2
+				if improvement_score > best_improvement_score:
+					best_improvement_score = improvement_score
+					best_improvement = cell
+			if fort > 0:
+				var fort_score := fort * 2
+				if structure == "":
+					fort_score += 1
+				if fort_score > best_fort_score:
+					best_fort_score = fort_score
+					best_fort = cell
+			if structure != "":
+				var structure_score := 0
+				match structure:
+					"town":
+						structure_score = 3
+					"village":
+						structure_score = 2
+					"camp":
+						structure_score = 1
+				if structure_score > best_structure_score:
+					best_structure_score = structure_score
+					best_structure = cell
+
+	if best_improvement != Vector2i(-1, -1):
+		var old_improvement := world_grid.get_improvement(best_improvement)
+		world_grid.set_improvement(best_improvement, "")
+		_log_event("Ano %d: La crisis de los %s arruina sus %s" % [world_year, species, old_improvement], species)
+		return true
+	if best_fort != Vector2i(-1, -1):
+		var new_fort := maxi(world_grid.get_fortification(best_fort) - 1, 0)
+		world_grid.set_fortification(best_fort, new_fort)
+		_log_event("Ano %d: Los %s abandonan parte de sus defensas" % [world_year, species], species)
+		return true
+	if severity >= 0.95 and best_structure != Vector2i(-1, -1):
+		var old_structure := world_grid.get_structure(best_structure)
+		world_grid.set_structure(best_structure, _downgraded_structure(old_structure))
+		world_grid.set_fortification(best_structure, maxi(world_grid.get_fortification(best_structure) - 1, 0))
+		_log_event("Ano %d: Los %s ven colapsar un %s" % [world_year, species, old_structure], species)
+		return true
+	return false
+
+func _apply_population_pressure(species: String, pop: int, capacity: int, food_balance: float, food_stock: float, pressure: float) -> void:
+	var state := _species_pressures.get(species, _make_pressure_state()) as Dictionary
+	var overcrowding := maxi(pop - capacity, 0)
+	var starving := food_stock < maxf(4.0, float(pop) * 0.12) or food_balance < -1.5
+	state["capacity"] = capacity
+	state["capacity_left"] = maxi(capacity - pop, 0)
+	state["food_balance"] = food_balance
+	state["food"] = food_stock
+	state["pressure"] = pressure
+	state["starving"] = starving
+	state["overcrowding"] = overcrowding
+	_species_pressures[species] = state
+	if pop <= 0:
+		return
+
+	var evo_penalty := pressure * 0.025 + float(overcrowding) * 0.002
+	if starving:
+		evo_penalty += 0.04
+	for human in humans:
+		if human.species_name == species:
+			human.evolution_score -= evo_penalty
+
+	if starving and food_stock <= 1.0 and world_year % 6 == 0:
+		_apply_famine_losses(species, 2 if pressure >= 0.9 and pop >= 8 else 1)
+	if pressure >= 0.55 and world_year % 10 == 0:
+		_apply_settlement_collapse(species, pressure)
+
 func _update_resources_and_fleets() -> void:
 	var improvements := _improvement_counts()
 	var pops := _species_population_counts()
@@ -479,10 +787,11 @@ func _update_resources_and_fleets() -> void:
 		var name := sp["name"] as String
 		var stock := _resource_stock(name)
 		var fleet := _fleet_state(name)
-		var data: Dictionary = improvements.get(name, {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "town": 0, "village": 0})
+		var data: Dictionary = improvements.get(name, {"farm": 0, "mine": 0, "housing": 0, "dock": 0, "forest": 0, "camp": 0, "town": 0, "village": 0})
 		var pop := pops.get(name, 0) as int
 		var tech := _species_tech.get(name, 0) as int
-		stock["food"] = (stock.get("food", 0.0) as float) + float(data.get("farm", 0) as int) * 1.6 + float(data.get("dock", 0) as int) * 0.25 - float(pop) * 0.22
+		var food_balance := float(data.get("farm", 0) as int) * 1.6 + float(data.get("dock", 0) as int) * 0.25 - float(pop) * 0.22
+		stock["food"] = (stock.get("food", 0.0) as float) + food_balance
 		stock["wood"] = (stock.get("wood", 0.0) as float) + float(data.get("forest", 0) as int) * 0.12 + float(data.get("housing", 0) as int) * 0.05 + float(data.get("dock", 0) as int) * 0.08
 		stock["stone"] = (stock.get("stone", 0.0) as float) + float(data.get("mine", 0) as int) * 0.55
 		if tech >= 2:
@@ -491,10 +800,10 @@ func _update_resources_and_fleets() -> void:
 			stock["iron"] = (stock.get("iron", 0.0) as float) + float(data.get("mine", 0) as int) * 0.08
 		for key: String in RESOURCE_KEYS:
 			stock[key] = clampf(stock.get(key, 0.0) as float, 0.0, 999.0)
-		if (stock.get("food", 0.0) as float) < 4.0 and pop > 0:
-			for human in humans:
-				if human.species_name == name:
-					human.evolution_score -= 0.03
+		var capacity := _settlement_capacity(data, tech)
+		var overcrowding := maxi(pop - capacity, 0)
+		var pressure := clampf(float(overcrowding) / maxf(float(capacity), 1.0) + maxf(-food_balance, 0.0) * 0.12 + maxf(3.0 - (stock.get("food", 0.0) as float), 0.0) * 0.08, 0.0, 1.4)
+		_apply_population_pressure(name, pop, capacity, food_balance, stock.get("food", 0.0) as float, pressure)
 		var port_count := (ports.get(name, []) as Array).size()
 		var desired_trade := mini(port_count, 1 + tech)
 		while (fleet.get("trade", 0) as int) < desired_trade and _spend_resources(name, _ship_cost("trade")):
@@ -608,6 +917,83 @@ func _gather_ports() -> Dictionary:
 				ports[owner] = []
 			(ports[owner] as Array).append({"land": cell, "water": water_cell})
 	return ports
+
+func _sea_path_key(a: Vector2i, b: Vector2i) -> String:
+	if a.x < b.x or (a.x == b.x and a.y <= b.y):
+		return "%d:%d|%d:%d" % [a.x, a.y, b.x, b.y]
+	return "%d:%d|%d:%d" % [b.x, b.y, a.x, a.y]
+
+func _find_sea_path(start: Vector2i, goal: Vector2i, max_steps: int = 96) -> Array[Vector2i]:
+	if start == goal:
+		return [start]
+	if world_grid.get_biome(start) != "water" or world_grid.get_biome(goal) != "water":
+		return []
+	var cache_key := _sea_path_key(start, goal)
+	if _sea_route_cache.has(cache_key):
+		return (_sea_route_cache[cache_key] as Array).duplicate()
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var queue: Array[Vector2i] = [start]
+	var visited := {start: true}
+	var came_from := {}
+	while not queue.is_empty():
+		var current: Vector2i = queue.pop_front()
+		if current.distance_to(start) > float(max_steps):
+			continue
+		for dir in dirs:
+			var next := current + dir
+			if not world_grid.is_in_bounds(next):
+				continue
+			if visited.has(next):
+				continue
+			if world_grid.get_biome(next) != "water":
+				continue
+			visited[next] = true
+			came_from[next] = current
+			if next == goal:
+				var path: Array[Vector2i] = [goal]
+				var step := goal
+				while came_from.has(step):
+					step = came_from[step] as Vector2i
+					path.push_front(step)
+					if step == start:
+						break
+				_sea_route_cache[cache_key] = path.duplicate()
+				return path
+			queue.push_back(next)
+	_sea_route_cache[cache_key] = []
+	return []
+
+func _best_reachable_port_pair(port_list: Array, max_steps: int = 96) -> Dictionary:
+	var best: Dictionary = {}
+	var best_len := 999999
+	for i in port_list.size():
+		for j in range(i + 1, port_list.size()):
+			var from_port := port_list[i] as Dictionary
+			var to_port := port_list[j] as Dictionary
+			var path := _find_sea_path(from_port["water"] as Vector2i, to_port["water"] as Vector2i, max_steps)
+			if path.is_empty():
+				continue
+			if path.size() < best_len:
+				best_len = path.size()
+				best = {
+					"from": from_port,
+					"to": to_port,
+					"path": path,
+				}
+	return best
+
+func _best_reachable_enemy_ports(a_ports: Array, b_ports: Array, max_steps: int = 120) -> Dictionary:
+	var best: Dictionary = {}
+	var best_len := 999999
+	for pa: Dictionary in a_ports:
+		for pb: Dictionary in b_ports:
+			var path := _find_sea_path(pa["water"] as Vector2i, pb["water"] as Vector2i, max_steps)
+			if path.is_empty():
+				continue
+			if path.size() < best_len:
+				best_len = path.size()
+				best = {"from": pa, "to": pb, "path": path}
+	return best
 
 func _append_trade_route_if_missing(routes: Array[Dictionary], route: Dictionary) -> void:
 	for existing: Dictionary in routes:
@@ -810,6 +1196,7 @@ func _update_trade() -> void:
 func _update_trade_v2() -> void:
 	var towns: Dictionary = {}
 	var ports := _gather_ports()
+	_sea_route_cache.clear()
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
 			var cell := Vector2i(x, y)
@@ -842,24 +1229,17 @@ func _update_trade_v2() -> void:
 	for species: String in ports.keys():
 		var sp_ports: Array = ports[species]
 		var trade_fleets := (_fleet_state(species).get("trade", 0) as int)
-		if trade_fleets <= 0:
+		if trade_fleets <= 0 or sp_ports.size() < 2:
 			continue
-		for i in sp_ports.size():
-			var best_dist := 999999.0
-			var best_j := -1
-			for j in sp_ports.size():
-				if j == i:
-					continue
-				var from_water := (sp_ports[i] as Dictionary)["water"] as Vector2i
-				var to_water := (sp_ports[j] as Dictionary)["water"] as Vector2i
-				var dist := from_water.distance_to(to_water)
-				if dist < best_dist and dist < 55.0:
-					best_dist = dist
-					best_j = j
-			if best_j < 0:
-				continue
-			var port_a: Dictionary = sp_ports[i] as Dictionary
-			var port_b: Dictionary = sp_ports[best_j] as Dictionary
+		var best_pair := _best_reachable_port_pair(sp_ports, 120)
+		if best_pair.is_empty():
+			continue
+		var port_a := best_pair["from"] as Dictionary
+		var port_b := best_pair["to"] as Dictionary
+		var path := best_pair["path"] as Array
+		if path.size() < 2:
+			continue
+		for _i in range(mini(trade_fleets, 2)):
 			_append_trade_route_if_missing(new_routes, {
 				"from": port_a["water"] as Vector2i,
 				"to": port_b["water"] as Vector2i,
@@ -867,6 +1247,7 @@ func _update_trade_v2() -> void:
 				"mode": "sea",
 				"port_from": port_a["land"] as Vector2i,
 				"port_to": port_b["land"] as Vector2i,
+				"path": path,
 			})
 
 	for r: Dictionary in new_routes:
@@ -896,6 +1277,37 @@ func _update_trade_v2() -> void:
 			if (human.grid_position - hub_cell).length() <= 2.0:
 				human.evolution_score += 0.015 if world_grid.get_improvement(hub_cell) == "dock" else 0.01
 				break
+
+func _path_to_points(path: Array) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	for cell: Vector2i in path:
+		points.append(Vector2((cell.x + 0.5) * TILE_SIZE, (cell.y + 0.5) * TILE_SIZE))
+	return points
+
+func _path_progress_position(path: Array, t: float) -> Vector2:
+	if path.is_empty():
+		return Vector2.ZERO
+	if path.size() == 1:
+		var only := path[0] as Vector2i
+		return Vector2((only.x + 0.5) * TILE_SIZE, (only.y + 0.5) * TILE_SIZE)
+	var points := _path_to_points(path)
+	var lengths: Array[float] = []
+	var total := 0.0
+	for i in range(points.size() - 1):
+		var seg := points[i].distance_to(points[i + 1])
+		lengths.append(seg)
+		total += seg
+	if total <= 0.0:
+		return points[0]
+	var target := clampf(t, 0.0, 1.0) * total
+	var walked := 0.0
+	for i in range(lengths.size()):
+		var seg_len := lengths[i] as float
+		if walked + seg_len >= target:
+			var local_t := (target - walked) / maxf(seg_len, 0.001)
+			return points[i].lerp(points[i + 1], local_t)
+		walked += seg_len
+	return points[points.size() - 1]
 
 func _apply_power_at(cell: Vector2i) -> void:
 	var power: String = GameUI.POWERS[ui.selected_power]
@@ -1153,18 +1565,17 @@ func _draw() -> void:
 		var mode := route.get("mode", "land") as String
 		var rc: Color    = (_species_colors.get(rsp, Color.WHITE) as Color).lightened(0.25)
 		rc.a = 0.72 if mode == "sea" else 0.60
-		var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
-		var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
-		var total_len := wp_a.distance_to(wp_b)
-		var dir := (wp_b - wp_a).normalized()
-		var period := 6.0 if mode == "sea" else 7.0
-		var seg_start := anim_t * period
-		while seg_start < total_len:
-			var seg_end := minf(seg_start + (6.0 if mode == "sea" else 4.0), total_len)
-			draw_line(wp_a + dir * seg_start, wp_a + dir * seg_end, rc, 2.0 if mode == "sea" else 1.5)
-			seg_start += period
+		var route_path := route.get("path", []) as Array
+		if route_path.size() >= 2:
+			var points := _path_to_points(route_path)
+			for i in range(points.size() - 1):
+				draw_line(points[i], points[i + 1], rc, 2.0 if mode == "sea" else 1.5)
+		else:
+			var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
+			var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
+			draw_line(wp_a, wp_b, rc, 2.0 if mode == "sea" else 1.5)
 		var caravan_t := fmod(float(Time.get_ticks_msec()) / 2000.0, 1.0)
-		var caravan_pos := wp_a.lerp(wp_b, caravan_t)
+		var caravan_pos := _path_progress_position(route_path, caravan_t) if route_path.size() >= 2 else Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE).lerp(Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE), caravan_t)
 		if mode == "sea":
 			draw_line(caravan_pos + Vector2(-2.5, 2.0), caravan_pos + Vector2(2.5, 2.0), Color(0.82, 0.56, 0.28, 0.95), 1.5)
 			draw_colored_polygon(PackedVector2Array([
@@ -1187,23 +1598,17 @@ func _draw() -> void:
 		var b_ports: Array = ports_for_war.get(parts[1], [])
 		if a_ports.is_empty() or b_ports.is_empty():
 			continue
-		var best_a: Dictionary = {}
-		var best_b: Dictionary = {}
-		var best_dist := 999999.0
-		for pa: Dictionary in a_ports:
-			for pb: Dictionary in b_ports:
-				var dist := (pa["water"] as Vector2i).distance_to(pb["water"] as Vector2i)
-				if dist < best_dist:
-					best_dist = dist
-					best_a = pa
-					best_b = pb
-		if best_a.is_empty() or best_b.is_empty() or best_dist > 60.0:
+		var best_route := _best_reachable_enemy_ports(a_ports, b_ports, 120)
+		if best_route.is_empty():
 			continue
-		var wa := Vector2(((best_a["water"] as Vector2i).x + 0.5) * TILE_SIZE, ((best_a["water"] as Vector2i).y + 0.5) * TILE_SIZE)
-		var wb := Vector2(((best_b["water"] as Vector2i).x + 0.5) * TILE_SIZE, ((best_b["water"] as Vector2i).y + 0.5) * TILE_SIZE)
+		var war_path := best_route.get("path", []) as Array
+		if war_path.size() < 2:
+			continue
+		var war_points := _path_to_points(war_path)
 		var war_pulse := 0.45 + 0.55 * sin(float(Time.get_ticks_msec()) / 220.0)
-		draw_line(wa, wb, Color(1.0, 0.22, 0.10, 0.25 + 0.25 * war_pulse), 2.2)
-		var raid_pos := wa.lerp(wb, fmod(float(Time.get_ticks_msec()) / 2300.0, 1.0))
+		for i in range(war_points.size() - 1):
+			draw_line(war_points[i], war_points[i + 1], Color(1.0, 0.22, 0.10, 0.25 + 0.25 * war_pulse), 2.2)
+		var raid_pos := _path_progress_position(war_path, fmod(float(Time.get_ticks_msec()) / 2300.0, 1.0))
 		draw_circle(raid_pos, 3.0, Color(1.0, 0.35, 0.15, 0.85))
 		draw_line(raid_pos + Vector2(-3, 2), raid_pos + Vector2(3, 2), Color(0.35, 0.18, 0.08, 0.9), 1.2)
 
@@ -1310,8 +1715,10 @@ func _species_stats() -> Array[String]:
 		var tech: int = _species_tech.get(sp_name, 0) as int
 		var stock := _resource_stock(sp_name)
 		var fleets := _fleet_state(sp_name)
+		var pressure_state := _species_pressures.get(sp_name, _make_pressure_state()) as Dictionary
 		var dom_rel := _dominant_religion(sp_name)
 		var line := "%s: %d pop  %d terr  tec:%d  evo:%.1f" % [sp_name, pop, tiles, tech, evo]
+		line += "  cap:%d/%d" % [pop, pressure_state.get("capacity", 0) as int]
 		line += "  f:%.0f m:%.0f p:%.0f h:%.0f" % [
 			stock.get("food", 0.0) as float,
 			stock.get("wood", 0.0) as float,
@@ -1322,6 +1729,10 @@ func _species_stats() -> Array[String]:
 		var war_f := fleets.get("war", 0) as int
 		if trade_f > 0 or war_f > 0:
 			line += "  fl:%d/%d" % [trade_f, war_f]
+		if pressure_state.get("starving", false) as bool:
+			line += "  [HAMBRE]"
+		elif (pressure_state.get("overcrowding", 0) as int) > 0:
+			line += "  [HACINADOS]"
 		if dom_rel != "" and dom_rel != (SPECIES_RELIGIONS.get(sp_name, "") as String):
 			line += "  [" + dom_rel + "]"
 		if pop == 0 and tiles > 0:
@@ -1614,7 +2025,9 @@ func _refresh_hud() -> void:
 		if h.is_hero:
 			hero_lines.append("★ %s (%s) — %d batallas" % [h.hero_name, h.species_name, h.battles_won])
 			hero_colors.append((_species_colors.get(h.species_name, Color.WHITE) as Color))
-	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year)
+	var advisory_prompt := _active_advice.get("prompt", "") as String if not _active_advice.is_empty() else ""
+	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year, advisory_prompt, not _active_advice.is_empty())
+	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty())
 
 func _has_human_in_cell(cell: Vector2i) -> bool:
 	for human in humans:
