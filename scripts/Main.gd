@@ -42,8 +42,10 @@ var _panning := false
 var _pan_origin := Vector2.ZERO
 var _cam_origin := Vector2.ZERO
 
+const GameHUDScript = preload("res://scripts/GameHUD.gd")
+
 var ui: GameUI
-var hud: GameHUD
+var hud: Node2D
 var camera: Camera2D
 
 func _ready() -> void:
@@ -63,7 +65,7 @@ func _ready() -> void:
 	var hud_layer := CanvasLayer.new()
 	hud_layer.layer = 5
 	add_child(hud_layer)
-	hud = GameHUD.new()
+	hud = GameHUDScript.new()
 	hud_layer.add_child(hud)
 
 	ui = GameUI.new()
