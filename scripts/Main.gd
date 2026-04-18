@@ -10,10 +10,10 @@ const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain"]
 const MAP_PRESETS: Array[String] = ["random", "earth_like", "continent"]
 const TIME_SPEEDS: Array[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
 const SPECIES_LIBRARY: Array[Dictionary] = [
-	{"name": "Humanos", "color": Color(1.0, 0.92, 0.80), "preferred": ["grass", "forest"]},
-	{"name": "Elfos",   "color": Color(0.75, 0.95, 0.75), "preferred": ["forest", "grass"]},
-	{"name": "Enanos",  "color": Color(0.82, 0.75, 0.62), "preferred": ["mountain", "forest"]},
-	{"name": "Orcos",   "color": Color(0.65, 0.80, 0.55), "preferred": ["sand", "grass"]},
+	{"name": "Humanos", "color": Color(1.0, 0.92, 0.80), "preferred": ["grass", "forest"],   "combat": 1.0, "defense": 1.0, "evo_rate": 1.0},
+	{"name": "Elfos",   "color": Color(0.75, 0.95, 0.75), "preferred": ["forest", "grass"],   "combat": 0.6, "defense": 0.8, "evo_rate": 2.0},
+	{"name": "Enanos",  "color": Color(0.82, 0.75, 0.62), "preferred": ["mountain", "forest"],"combat": 0.9, "defense": 2.5, "evo_rate": 0.8},
+	{"name": "Orcos",   "color": Color(0.65, 0.80, 0.55), "preferred": ["sand", "grass"],     "combat": 2.0, "defense": 0.7, "evo_rate": 0.6},
 ]
 
 var rng := RandomNumberGenerator.new()
@@ -21,6 +21,8 @@ var world_grid := WorldGrid.new(WORLD_WIDTH, WORLD_HEIGHT)
 var humans: Array[Human] = []
 var move_tick_accumulator := 0.0
 var _species_colors: Dictionary = {}
+var _species_combat: Dictionary = {}
+var _species_defense: Dictionary = {}
 
 var current_speed_idx := 1
 var current_map_idx := 0
@@ -32,7 +34,10 @@ var ui: GameUI
 func _ready() -> void:
 	rng.randomize()
 	for sp: Dictionary in SPECIES_LIBRARY:
-		_species_colors[sp["name"] as String] = sp["color"] as Color
+		var n := sp["name"] as String
+		_species_colors[n]  = sp["color"] as Color
+		_species_combat[n]  = sp["combat"] as float
+		_species_defense[n] = sp["defense"] as float
 	ui = GameUI.new()
 	add_child(ui)
 	ui.setup_species(SPECIES_LIBRARY)
@@ -52,6 +57,7 @@ func _process(delta: float) -> void:
 		_move_humans()
 		_update_evolution()
 		_resolve_combat()
+		_decay_dead_territories()
 		ticked = true
 	if ticked:
 		queue_redraw()
@@ -116,7 +122,8 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	var preferred: Array[String] = []
 	preferred.assign(species["preferred"])
 	var human := Human.new()
-	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred)
+	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred,
+		species["combat"] as float, species["defense"] as float, species["evo_rate"] as float)
 	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
 	humans.append(human)
@@ -144,7 +151,9 @@ func _resolve_combat() -> void:
 			var target_owner := world_grid.get_owner(target)
 			if target_owner == "" or target_owner == human.species_name:
 				continue
-			if rng.randf() < _conquest_chance(world_grid.get_structure(target)):
+			var def_bonus: float = _species_defense.get(target_owner, 1.0)
+			var chance := _conquest_chance(world_grid.get_structure(target)) * human.combat_bonus / def_bonus
+			if rng.randf() < chance:
 				world_grid.set_owner(target, human.species_name)
 
 func _conquest_chance(structure: String) -> float:
@@ -155,6 +164,7 @@ func _conquest_chance(structure: String) -> float:
 		_:         return 0.05
 
 func _update_evolution() -> void:
+	var to_remove: Array[Human] = []
 	for human in humans:
 		var cell := human.grid_position
 		human.update_evolution(world_grid.get_biome(cell))
@@ -162,6 +172,45 @@ func _update_evolution() -> void:
 		match world_grid.get_structure(cell):
 			"village": human.evolution_score += 0.02
 			"town":    human.evolution_score += 0.05
+		if human.is_dead():
+			to_remove.append(human)
+	for dead in to_remove:
+		humans.erase(dead)
+		dead.queue_free()
+	if humans.size() < MAX_HUMANS:
+		for human in humans.duplicate():
+			if human.evolution_score > 15.0 and humans.size() < MAX_HUMANS:
+				if rng.randf() < 0.01:
+					_try_reproduce(human)
+
+func _try_reproduce(parent: Human) -> void:
+	var dirs: Array[Vector2i] = [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
+	for dir in dirs:
+		var cell := parent.grid_position + dir
+		if world_grid.is_walkable(cell) and not _has_human_in_cell(cell):
+			var sp := _find_species(parent.species_name)
+			if not sp.is_empty():
+				_spawn_human_at(cell, sp)
+				parent.evolution_score -= 8.0
+			return
+
+func _find_species(sp_name: String) -> Dictionary:
+	for sp: Dictionary in SPECIES_LIBRARY:
+		if sp["name"] == sp_name:
+			return sp
+	return {}
+
+func _decay_dead_territories() -> void:
+	var living: Dictionary = {}
+	for human in humans:
+		living[human.species_name] = true
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			var owner := world_grid.get_owner(cell)
+			if owner != "" and not living.has(owner):
+				if rng.randf() < 0.03:
+					world_grid.set_owner(cell, "")
 
 func _draw() -> void:
 	for y in range(world_grid.height):
@@ -230,7 +279,10 @@ func _species_stats() -> Array[String]:
 			continue
 		var evo: float = stats[sp_name]["evo"] / maxf(float(pop), 1.0)
 		var buildings: int = stats[sp_name]["buildings"]
-		result.append("%s: %d pop  %d terr  %d edif  evo:%.1f" % [sp_name, pop, tiles, buildings, evo])
+		var line := "%s: %d pop  %d terr  %d edif  evo:%.1f" % [sp_name, pop, tiles, buildings, evo]
+		if pop == 0 and tiles > 0:
+			line += "  [EXTINTO]"
+		result.append(line)
 	if result.is_empty():
 		result.append("Sin entidades — usa tab Entidades")
 	return result

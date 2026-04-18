@@ -8,17 +8,26 @@ var species_color: Color = Color(1.0, 0.92, 0.80)
 var preferred_biomes: Array[String] = []
 var evolution_score := 0.0
 var age_ticks := 0
+var combat_bonus := 1.0
+var defense_bonus := 1.0
+var evo_rate := 1.0
 
-func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String]) -> void:
+func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0) -> void:
 	grid_position = p_grid_position
 	tile_size = p_tile_size
 	species_name = p_species_name
 	species_color = p_species_color
 	preferred_biomes = p_preferred_biomes.duplicate()
+	combat_bonus = p_combat
+	defense_bonus = p_defense
+	evo_rate = p_evo_rate
 	evolution_score = 0.0
 	age_ticks = 0
 	_update_world_position()
 	queue_redraw()
+
+func is_dead() -> bool:
+	return evolution_score < -20.0
 
 func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dictionary) -> Vector2i:
 	var directions: Array[Vector2i] = [
@@ -67,7 +76,7 @@ func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dic
 func update_evolution(current_biome: String) -> void:
 	age_ticks += 1
 	if preferred_biomes.has(current_biome):
-		evolution_score += 0.03
+		evolution_score += 0.03 * evo_rate
 	else:
 		evolution_score -= 0.01
 	evolution_score = clamp(evolution_score, -50.0, 200.0)
@@ -80,5 +89,7 @@ func _update_world_position() -> void:
 	position = Vector2((grid_position.x + 0.5) * tile_size, (grid_position.y + 0.5) * tile_size)
 
 func _draw() -> void:
-	draw_circle(Vector2.ZERO, tile_size * 0.28, species_color)
+	var health := clampf((evolution_score + 20.0) / 40.0, 0.0, 1.0)
+	var c := species_color.lerp(Color(0.5, 0.1, 0.1), 1.0 - health)
+	draw_circle(Vector2.ZERO, tile_size * 0.28, c)
 	draw_circle(Vector2.ZERO, tile_size * 0.14, Color(0.20, 0.15, 0.12))
