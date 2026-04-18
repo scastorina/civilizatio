@@ -48,7 +48,7 @@ func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dic
 		var biome := grid.get_biome(next)
 		if preferred_biomes.has(biome):
 			score += 2
-		if grid.get_owner(next) == species_name:
+		if dir != Vector2i.ZERO and grid.get_owner(next) == species_name:
 			score += 1
 			match grid.get_structure(next):
 				"village": score += 1
