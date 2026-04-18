@@ -43,7 +43,7 @@ func _generate_earth_like() -> void:
 	_tiles.clear()
 	for y in range(height):
 		var row: Array = []
-		var latitude := abs((float(y) / float(height - 1)) * 2.0 - 1.0)
+		var latitude: float = absf((float(y) / float(height - 1)) * 2.0 - 1.0)
 		for x in range(width):
 			var continental_noise := _rng.randf()
 			var biome := "grass"
@@ -63,7 +63,7 @@ func _generate_earth_like() -> void:
 func _generate_continent() -> void:
 	_tiles.clear()
 	var center := Vector2(width * 0.5, height * 0.5)
-	var max_distance := min(width, height) * 0.42
+	var max_distance: float = min(width, height) * 0.42
 	for y in range(height):
 		var row: Array = []
 		for x in range(width):
