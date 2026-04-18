@@ -7,6 +7,8 @@ var height: int
 var _rng := RandomNumberGenerator.new()
 var _tiles: Array = []
 var _owners: Array = []
+var _presence: Array = []
+var _structures: Array = []
 
 func _init(p_width: int, p_height: int) -> void:
 	width = p_width
@@ -25,11 +27,19 @@ func generate(preset: String = "random") -> void:
 
 func _clear_owners() -> void:
 	_owners.clear()
+	_presence.clear()
+	_structures.clear()
 	for _y in range(height):
-		var row: Array = []
+		var orow: Array = []
+		var prow: Array = []
+		var srow: Array = []
 		for _x in range(width):
-			row.append("")
-		_owners.append(row)
+			orow.append("")
+			prow.append(0)
+			srow.append("")
+		_owners.append(orow)
+		_presence.append(prow)
+		_structures.append(srow)
 
 func get_owner(cell: Vector2i) -> String:
 	if not is_in_bounds(cell):
@@ -39,7 +49,29 @@ func get_owner(cell: Vector2i) -> String:
 func set_owner(cell: Vector2i, species: String) -> void:
 	if not is_in_bounds(cell):
 		return
-	_owners[cell.y][cell.x] = species
+	if _owners[cell.y][cell.x] != species:
+		_owners[cell.y][cell.x] = species
+		_presence[cell.y][cell.x] = 0
+		_structures[cell.y][cell.x] = ""
+
+func tick_presence(cell: Vector2i, species: String) -> void:
+	if not is_in_bounds(cell):
+		return
+	if _owners[cell.y][cell.x] != species:
+		return
+	_presence[cell.y][cell.x] += 1
+	var p: int = _presence[cell.y][cell.x]
+	if p >= 500:
+		_structures[cell.y][cell.x] = "town"
+	elif p >= 150:
+		_structures[cell.y][cell.x] = "village"
+	elif p >= 40:
+		_structures[cell.y][cell.x] = "camp"
+
+func get_structure(cell: Vector2i) -> String:
+	if not is_in_bounds(cell):
+		return ""
+	return _structures[cell.y][cell.x]
 
 func _generate_random() -> void:
 	_tiles.clear()
