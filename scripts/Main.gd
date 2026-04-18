@@ -27,6 +27,7 @@ var _species_tech: Dictionary = {}
 var _species_research: Dictionary = {}
 var _species_resources: Dictionary = {}
 var _species_fleets: Dictionary = {}
+var _species_armies: Dictionary = {}   # species -> int: land army count
 var _species_pressures: Dictionary = {}
 var _territory_names: Dictionary = {}
 var _chronicle: Array[String] = []
@@ -84,6 +85,7 @@ func _ready() -> void:
 		_species_research[n] = 0.0
 		_species_resources[n] = _make_resource_stock()
 		_species_fleets[n] = {"trade": 0, "war": 0}
+		_species_armies[n] = 0
 		_species_pressures[n] = _make_pressure_state()
 	camera = Camera2D.new()
 	camera.zoom = Vector2(2.0, 2.0)
@@ -211,6 +213,7 @@ func _regenerate_world() -> void:
 		_species_research[n] = 0.0
 		_species_resources[n] = _make_resource_stock()
 		_species_fleets[n] = {"trade": 0, "war": 0}
+		_species_armies[n] = 0
 		_species_pressures[n] = _make_pressure_state()
 	_territory_names.clear()
 	_chronicle.clear()
@@ -289,7 +292,9 @@ func _resolve_combat() -> void:
 			var tech_atk := 1.25 if (_species_tech.get(human.species_name, 0) as int) >= 2 else 1.0
 			var tech_def := 2.0  if (_species_tech.get(target_owner, 0) as int) >= 3 else 1.0
 			var war_bonus := 1.5 if _war_pairs.has(pair_key) else 1.0
-			var chance := _conquest_chance(world_grid.get_structure(target), fort_level) * human.combat_bonus * tech_atk * war_bonus / (def_bonus * tech_def)
+			var army_atk := 1.0 + float(_species_armies.get(human.species_name, 0) as int) * 0.06
+			var army_def := 1.0 + float(_species_armies.get(target_owner, 0) as int) * 0.04
+			var chance := _conquest_chance(world_grid.get_structure(target), fort_level) * human.combat_bonus * tech_atk * war_bonus * army_atk / (def_bonus * tech_def * army_def)
 			var success := rng.randf() < chance
 			if _war_pairs.has(pair_key) or fort_level > 0 or success:
 				_record_battle_marker(human.grid_position, target, human.species_name, target_owner, success, fort_level)
@@ -615,6 +620,10 @@ func _ship_cost(mode: String) -> Dictionary:
 		return {"wood": 14.0, "stone": 0.0, "iron": 6.0, "food": 2.0}
 	return {"wood": 10.0, "stone": 0.0, "iron": 2.0, "food": 2.0}
 
+func _army_cost(tech: int) -> Dictionary:
+	# Higher tech = more iron required, less stone
+	return {"wood": 0.0, "stone": maxf(4.0 - float(tech), 1.0), "iron": float(tech) * 1.5, "food": 2.0}
+
 func _settlement_capacity(data: Dictionary, tech: int) -> int:
 	var capacity := 6
 	capacity += (data.get("camp", 0) as int) * 6
@@ -830,6 +839,23 @@ func _update_resources_and_fleets() -> void:
 			_log_event("Ano %d: Los %s botaron una flota de guerra" % [world_year, name], name)
 		if not in_war:
 			fleet["war"] = maxi((fleet.get("war", 0) as int) - 1, 0)
+		# ── Land armies (tech >= 1) ──────────────────────────────────────────
+		if tech >= 1:
+			var army := _species_armies.get(name, 0) as int
+			# Army upkeep: each unit eats 0.30 food per tick
+			var upkeep := float(army) * 0.30
+			stock["food"] = maxf((stock.get("food", 0.0) as float) - upkeep, 0.0)
+			if (stock.get("food", 0.0) as float) <= 0.0 and army > 0:
+				army = maxi(army - 1, 0)
+				_species_armies[name] = army
+			# Build new units if resources allow
+			var desired_army := mini(2 + tech * 2 + (2 if in_war else 0), 10)
+			while army < desired_army and _spend_resources(name, _army_cost(tech)):
+				army += 1
+				_species_armies[name] = army
+				_log_event("Año %d: Los %s reclutaron un ejército" % [world_year, name], name)
+		else:
+			_species_armies[name] = 0
 
 func _has_adjacent_biome(cell: Vector2i, biome: String) -> bool:
 	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -1204,6 +1230,31 @@ func _update_trade_v2() -> void:
 				"path": path,
 			})
 
+	# ── Cross-species trade between towns of different non-warring species ───────
+	var all_sp := towns.keys()
+	for ai in all_sp.size():
+		for bi in range(ai + 1, all_sp.size()):
+			var sp_a := all_sp[ai] as String
+			var sp_b := all_sp[bi] as String
+			if _war_pairs.has(_diplomacy_key(sp_a, sp_b)):
+				continue  # no trade during active war
+			var ta_list: Array = towns[sp_a]
+			var tb_list: Array = towns[sp_b]
+			var best_d := 28.0  # inter-species routes require closer towns
+			var best_a := Vector2i(-1, -1)
+			var best_b := Vector2i(-1, -1)
+			for ta: Vector2i in ta_list:
+				for tb: Vector2i in tb_list:
+					var d := (ta as Vector2i).distance_to(tb as Vector2i)
+					if d < best_d:
+						best_d = d; best_a = ta; best_b = tb
+			if best_a == Vector2i(-1, -1):
+				continue
+			_append_trade_route_if_missing(new_routes, {
+				"from": best_a, "to": best_b,
+				"species": sp_a, "partner": sp_b, "mode": "cross"
+			})
+
 	for r: Dictionary in new_routes:
 		var existed := false
 		for old: Dictionary in _trade_routes:
@@ -1211,25 +1262,46 @@ func _update_trade_v2() -> void:
 				existed = true
 				break
 		if not existed:
-			if r.get("mode", "land") == "sea":
+			var mode := r.get("mode", "land") as String
+			if mode == "sea":
 				_log_event("Ano %d: Los %s botaron una flota comercial" % [world_year, r["species"] as String], r["species"] as String)
+			elif mode == "cross":
+				var partner := r.get("partner", "?") as String
+				_log_event("Año %d: %s y %s abrieron una ruta comercial internacional" % [world_year, r["species"] as String, partner], r["species"] as String)
 			else:
 				_log_event("Ano %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
 
 	_trade_routes = new_routes
 
+	# ── Benefits for all trade hubs ───────────────────────────────────────────
 	var trade_hubs: Dictionary = {}
+	var cross_hubs: Dictionary = {}  # hubs where cross-species trade happens
 	for r: Dictionary in _trade_routes:
-		if r.get("mode", "land") == "sea":
-			trade_hubs[r["port_from"] as Vector2i] = true
-			trade_hubs[r["port_to"] as Vector2i] = true
+		var mode := r.get("mode", "land") as String
+		if mode == "sea":
+			trade_hubs[r["port_from"] as Vector2i] = r["species"] as String
+			trade_hubs[r["port_to"]   as Vector2i] = r["species"] as String
+		elif mode == "cross":
+			trade_hubs[r["from"] as Vector2i] = r["species"] as String
+			trade_hubs[r["to"]   as Vector2i] = r.get("partner", r["species"] as String) as String
+			cross_hubs[r["from"] as Vector2i] = true
+			cross_hubs[r["to"]   as Vector2i] = true
+			# Trading partners' relations improve over time
+			var sp_a2 := r["species"] as String
+			var sp_b2 := r.get("partner", "") as String
+			if sp_b2 != "":
+				_set_relation(sp_a2, sp_b2, minf(1.0, _get_relation(sp_a2, sp_b2) + 0.002))
 		else:
-			trade_hubs[r["from"] as Vector2i] = true
-			trade_hubs[r["to"] as Vector2i] = true
+			trade_hubs[r["from"] as Vector2i] = r["species"] as String
+			trade_hubs[r["to"]   as Vector2i] = r["species"] as String
+
 	for human in humans:
 		for hub_cell: Vector2i in trade_hubs.keys():
-			if (human.grid_position - hub_cell).length() <= 2.0:
-				human.evolution_score += 0.015 if world_grid.get_improvement(hub_cell) == "dock" else 0.01
+			if (human.grid_position - hub_cell).length() <= 2.5:
+				var is_dock := world_grid.get_improvement(hub_cell) == "dock"
+				var is_cross := cross_hubs.has(hub_cell)
+				var bonus := 0.025 if is_cross else (0.015 if is_dock else 0.010)
+				human.evolution_score += bonus
 				break
 
 func _path_to_points(path: Array) -> PackedVector2Array:
@@ -1487,39 +1559,60 @@ func _draw() -> void:
 		else:
 			draw_circle(mid, 2.0, Color(0.95, 0.95, 1.0, alpha_battle * 0.9))
 
-	# Army banners for war clusters
+	# Army presence indicators (peacetime & war)
+	_draw_peacetime_armies()
 	_draw_war_armies()
 
 	# Trade routes
-	var anim_t := fmod(float(Time.get_ticks_msec()) / 300.0, 1.0)
 	for route: Dictionary in _trade_routes:
 		var ra: Vector2i = route["from"] as Vector2i
 		var rb: Vector2i = route["to"] as Vector2i
 		var rsp: String  = route["species"] as String
 		var mode := route.get("mode", "land") as String
-		var rc: Color    = (_species_colors.get(rsp, Color.WHITE) as Color).lightened(0.25)
-		rc.a = 0.72 if mode == "sea" else 0.60
+		var partner := route.get("partner", "") as String
+		var rc: Color = (_species_colors.get(rsp, Color.WHITE) as Color).lightened(0.25)
 		var route_path := route.get("path", []) as Array
-		if route_path.size() >= 2:
-			var points := _path_to_points(route_path)
-			for i in range(points.size() - 1):
-				draw_line(points[i], points[i + 1], rc, 2.0 if mode == "sea" else 1.5)
-		else:
-			var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
-			var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
-			draw_line(wp_a, wp_b, rc, 2.0 if mode == "sea" else 1.5)
-		var caravan_t := fmod(float(Time.get_ticks_msec()) / 2000.0, 1.0)
-		var caravan_pos := _path_progress_position(route_path, caravan_t) if route_path.size() >= 2 else Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE).lerp(Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE), caravan_t)
-		if mode == "sea":
-			draw_line(caravan_pos + Vector2(-2.5, 2.0), caravan_pos + Vector2(2.5, 2.0), Color(0.82, 0.56, 0.28, 0.95), 1.5)
+		var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
+		var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
+
+		if mode == "cross":
+			# Cross-species: draw two half-lines in each species' color + glow
+			var pc: Color = (_species_colors.get(partner, Color.WHITE) as Color).lightened(0.25)
+			var mid := wp_a.lerp(wp_b, 0.5)
+			draw_line(wp_a, mid, Color(rc.r, rc.g, rc.b, 0.55), 2.0)
+			draw_line(mid, wp_b, Color(pc.r, pc.g, pc.b, 0.55), 2.0)
+			# Animated exchange marker at midpoint
+			var mt := fmod(float(Time.get_ticks_msec()) / 1800.0, 1.0)
+			var mp := wp_a.lerp(wp_b, mt)
+			draw_circle(mp, 3.2, Color(1.0, 0.92, 0.35, 0.88))
+			draw_circle(mp, 1.8, Color(0.85, 0.65, 0.15, 0.95))
+			# Endpoint diamonds
 			draw_colored_polygon(PackedVector2Array([
-				caravan_pos + Vector2(-2.5, 1.5),
-				caravan_pos + Vector2(0.0, -2.5),
-				caravan_pos + Vector2(2.5, 1.5),
-			]), Color(0.92, 0.92, 0.86, 0.92))
+				wp_a + Vector2(0,-4), wp_a + Vector2(4,0), wp_a + Vector2(0,4), wp_a + Vector2(-4,0)
+			]), Color(rc.r, rc.g, rc.b, 0.80))
+			draw_colored_polygon(PackedVector2Array([
+				wp_b + Vector2(0,-4), wp_b + Vector2(4,0), wp_b + Vector2(0,4), wp_b + Vector2(-4,0)
+			]), Color(pc.r, pc.g, pc.b, 0.80))
 		else:
-			draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
-			draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
+			rc.a = 0.72 if mode == "sea" else 0.60
+			if route_path.size() >= 2:
+				var points := _path_to_points(route_path)
+				for i in range(points.size() - 1):
+					draw_line(points[i], points[i + 1], rc, 2.0 if mode == "sea" else 1.5)
+			else:
+				draw_line(wp_a, wp_b, rc, 2.0 if mode == "sea" else 1.5)
+			var caravan_t := fmod(float(Time.get_ticks_msec()) / 2000.0, 1.0)
+			var caravan_pos := _path_progress_position(route_path, caravan_t) if route_path.size() >= 2 else wp_a.lerp(wp_b, caravan_t)
+			if mode == "sea":
+				draw_line(caravan_pos + Vector2(-2.5, 2.0), caravan_pos + Vector2(2.5, 2.0), Color(0.82, 0.56, 0.28, 0.95), 1.5)
+				draw_colored_polygon(PackedVector2Array([
+					caravan_pos + Vector2(-2.5, 1.5),
+					caravan_pos + Vector2(0.0, -2.5),
+					caravan_pos + Vector2(2.5, 1.5),
+				]), Color(0.92, 0.92, 0.86, 0.92))
+			else:
+				draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
+				draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
 
 	var ports_for_war := _gather_ports()
 	for war_key: String in _war_pairs.keys():
@@ -1644,6 +1737,59 @@ func _draw_war_armies() -> void:
 				(float(sy) / cluster.size() + 0.5) * TILE_SIZE
 			)
 			_draw_army_banner(centroid, sp, cluster.size())
+
+func _draw_peacetime_armies() -> void:
+	if _species_armies.is_empty():
+		return
+	# Build set of species currently at war
+	var at_war: Dictionary = {}
+	for key: String in _war_pairs.keys():
+		var parts := key.split("|")
+		if parts.size() == 2:
+			at_war[parts[0]] = true
+			at_war[parts[1]] = true
+
+	# Track which species have already had a shield drawn (one per species)
+	var drawn: Dictionary = {}
+	for cluster: Dictionary in _territory_cluster_cache:
+		var sp: String = cluster["species"] as String
+		if drawn.has(sp):
+			continue
+		var army_count: int = (_species_armies.get(sp, 0) as int)
+		if army_count <= 0:
+			continue
+		if at_war.has(sp):
+			continue  # war armies use _draw_war_armies() banners instead
+		var cpos: Vector2 = cluster["center"] as Vector2
+		_draw_peacetime_shield(cpos, sp, army_count)
+		drawn[sp] = true
+
+func _draw_peacetime_shield(pos: Vector2, species: String, army_count: int) -> void:
+	var sc: Color = (_species_colors.get(species, Color.WHITE) as Color)
+	var dim := Color(sc.r * 0.70, sc.g * 0.70, sc.b * 0.70, 0.72)
+	var border := dim.darkened(0.35)
+	# Shield outline (pentagon-ish)
+	var sh := 7.0
+	var shield_pts := PackedVector2Array([
+		pos + Vector2(-sh,       -sh * 0.90),
+		pos + Vector2( sh,       -sh * 0.90),
+		pos + Vector2( sh * 1.1,  sh * 0.10),
+		pos + Vector2( 0.0,       sh * 1.20),
+		pos + Vector2(-sh * 1.1,  sh * 0.10),
+	])
+	draw_colored_polygon(shield_pts, dim)
+	draw_polyline(PackedVector2Array([
+		shield_pts[0], shield_pts[1], shield_pts[2],
+		shield_pts[3], shield_pts[4], shield_pts[0],
+	]), border, 1.0)
+	# Cross emblem inside
+	draw_line(pos + Vector2(0, -sh * 0.55), pos + Vector2(0, sh * 0.50), border, 1.2)
+	draw_line(pos + Vector2(-sh * 0.55, -sh * 0.20), pos + Vector2(sh * 0.55, -sh * 0.20), border, 1.2)
+	# Unit dots below shield
+	var dot_n := mini(army_count, 9)
+	for i in dot_n:
+		var dx := (float(i) - float(dot_n - 1) * 0.5) * 3.2
+		draw_circle(pos + Vector2(dx, sh * 1.60), 1.4, Color(sc.r, sc.g, sc.b, 0.68))
 
 func _draw_army_banner(pos: Vector2, species: String, count: int) -> void:
 	var sc: Color = (_species_colors.get(species, Color.WHITE) as Color).lightened(0.05)

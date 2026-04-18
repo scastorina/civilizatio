@@ -131,64 +131,158 @@ func set_improvement(cell: Vector2i, improvement: String) -> void:
 		return
 	_improvements[cell.y][cell.x] = improvement
 
-func _generate_random() -> void:
-	_tiles.clear()
+# ── Noise helpers ──────────────────────────────────────────────────────────────
+
+func _generate_noise_grid() -> Array:
+	var grid: Array = []
 	for y in range(height):
 		var row: Array = []
 		for x in range(width):
-			var value := _rng.randf()
-			if value < 0.18:
-				row.append("water")
-			elif value < 0.24:
-				row.append("sand")
-			elif value < 0.72:
-				row.append("grass")
-			elif value < 0.88:
-				row.append("forest")
-			else:
-				row.append("mountain")
-		_tiles.append(row)
+			row.append(_rng.randf())
+		grid.append(row)
+	return grid
 
+## Box-blur smoothing: `passes` × 3×3 average over the grid.
+func _smooth_noise(grid: Array, passes: int) -> Array:
+	var cur := grid
+	for _p in range(passes):
+		var next: Array = []
+		for y in range(height):
+			var row: Array = []
+			for x in range(width):
+				var s := 0.0
+				for dy in range(-1, 2):
+					for dx in range(-1, 2):
+						s += cur[clampi(y+dy, 0, height-1)][clampi(x+dx, 0, width-1)] as float
+				row.append(s / 9.0)
+			next.append(row)
+		cur = next
+	return cur
+
+# ── Multi-continent "Earth-like" ───────────────────────────────────────────────
+# 5-6 continent seeds placed with minimum separation.
+# Biomes follow latitude + interior distance rules.
 func _generate_earth_like() -> void:
 	_tiles.clear()
+	var noise := _smooth_noise(_generate_noise_grid(), 3)
+
+	# Place 5 continent seeds with minimum mutual distance
+	const NUM_C := 5
+	var seeds: Array[Vector2] = []
+	var tries := 0
+	while seeds.size() < NUM_C and tries < 400:
+		tries += 1
+		var cand := Vector2(
+			_rng.randf_range(0.08, 0.92) * float(width),
+			_rng.randf_range(0.08, 0.92) * float(height))
+		var min_sep := float(min(width, height)) * 0.28
+		var ok := true
+		for s: Vector2 in seeds:
+			if cand.distance_to(s) < min_sep:
+				ok = false; break
+		if ok:
+			seeds.append(cand)
+
+	var base_r := float(min(width, height)) * 0.22
+
 	for y in range(height):
 		var row: Array = []
-		var latitude: float = absf((float(y) / float(height - 1)) * 2.0 - 1.0)
+		var lat := absf((float(y) / float(height - 1)) * 2.0 - 1.0)
 		for x in range(width):
-			var continental_noise := _rng.randf()
-			var biome := "grass"
-			if continental_noise < 0.35:
-				biome = "water"
-			elif latitude > 0.80:
-				biome = "mountain"
-			elif latitude > 0.65:
-				biome = "forest"
-			elif latitude < 0.15 and continental_noise > 0.70:
-				biome = "sand"
-			elif continental_noise > 0.85:
-				biome = "mountain"
+			var n := noise[y][x] as float
+			var best := 0.0
+			for seed: Vector2 in seeds:
+				var r := base_r * (0.55 + n * 0.85)
+				var inf := maxf(0.0, 1.0 - seed.distance_to(Vector2(x, y)) / r)
+				best = maxf(best, inf)
+
+			var biome: String
+			if   best < 0.06:                      biome = "water"
+			elif best < 0.15:                      biome = "sand"   # beach
+			elif lat  > 0.84:                      biome = "mountain"
+			elif lat  > 0.66:                      biome = "forest"
+			elif lat  < 0.14 and n > 0.60:         biome = "sand"   # tropical desert
+			elif best > 0.70 and n > 0.66:         biome = "mountain"
+			elif n    > 0.55 and best > 0.28:      biome = "forest"
+			else:                                  biome = "grass"
 			row.append(biome)
 		_tiles.append(row)
 
+# ── Single continent + island chains ──────────────────────────────────────────
 func _generate_continent() -> void:
 	_tiles.clear()
-	var center := Vector2(width * 0.5, height * 0.5)
-	var max_distance: float = min(width, height) * 0.42
+	var noise := _smooth_noise(_generate_noise_grid(), 3)
+
+	var center := Vector2(
+		_rng.randf_range(0.30, 0.70) * float(width),
+		_rng.randf_range(0.30, 0.70) * float(height))
+	var main_r := float(min(width, height)) * 0.35
+
+	# 3-5 island chains orbiting the main continent
+	var num_islands := _rng.randi_range(3, 5)
+	var islands: Array = []
+	for _i in num_islands:
+		var angle := _rng.randf() * TAU
+		var dist  := main_r * _rng.randf_range(0.80, 1.55)
+		var ic    := center + Vector2(cos(angle), sin(angle)) * dist
+		ic = Vector2(clampf(ic.x, 4.0, float(width) - 4.0), clampf(ic.y, 4.0, float(height) - 4.0))
+		islands.append({"c": ic, "r": main_r * _rng.randf_range(0.11, 0.24)})
+
 	for y in range(height):
 		var row: Array = []
 		for x in range(width):
-			var distance := Vector2(x, y).distance_to(center)
-			var value := _rng.randf()
-			if distance > max_distance + _rng.randf_range(-3.0, 3.0):
-				row.append("water")
-			elif distance > max_distance * 0.85:
-				row.append("sand")
-			elif value > 0.82:
-				row.append("mountain")
-			elif value > 0.58:
-				row.append("forest")
-			else:
-				row.append("grass")
+			var n   := noise[y][x] as float
+			var pos := Vector2(float(x), float(y))
+
+			# Main continent
+			var best := maxf(0.0, 1.0 - pos.distance_to(center) / (main_r * (0.55 + n * 0.85)))
+			# Island influences (capped at 0.65 so they're smaller)
+			for idata: Dictionary in islands:
+				var ir  := (idata["r"] as float) * (0.55 + n * 0.85)
+				var ii  := maxf(0.0, 1.0 - pos.distance_to(idata["c"] as Vector2) / ir)
+				best = maxf(best, ii * 0.65)
+
+			var biome: String
+			if   best < 0.06:               biome = "water"
+			elif best < 0.16:               biome = "sand"
+			elif best > 0.72 and n > 0.65:  biome = "mountain"
+			elif best > 0.42 and n > 0.52:  biome = "forest"
+			else:                           biome = "grass"
+			row.append(biome)
+		_tiles.append(row)
+
+# ── Archipelago (many small scattered islands) ─────────────────────────────────
+func _generate_random() -> void:
+	_tiles.clear()
+	var noise := _smooth_noise(_generate_noise_grid(), 2)
+
+	var num_islands := _rng.randi_range(8, 15)
+	var islands: Array = []
+	for _i in num_islands:
+		islands.append({
+			"c": Vector2(_rng.randf_range(0.05, 0.95) * float(width),
+			             _rng.randf_range(0.05, 0.95) * float(height)),
+			"r": _rng.randf_range(float(min(width, height)) * 0.04,
+			                      float(min(width, height)) * 0.20),
+		})
+
+	for y in range(height):
+		var row: Array = []
+		for x in range(width):
+			var n   := noise[y][x] as float
+			var pos := Vector2(float(x), float(y))
+			var best := 0.0
+			for idata: Dictionary in islands:
+				var ir := (idata["r"] as float) * (0.55 + n * 0.85)
+				best = maxf(best, maxf(0.0, 1.0 - pos.distance_to(idata["c"] as Vector2) / ir))
+
+			var biome: String
+			if   best < 0.07:               biome = "water"
+			elif best < 0.18:               biome = "sand"
+			elif best > 0.68 and n > 0.70:  biome = "mountain"
+			elif best > 0.40 and n > 0.55:  biome = "forest"
+			else:                           biome = "grass"
+			row.append(biome)
 		_tiles.append(row)
 
 func get_biome(cell: Vector2i) -> String:
