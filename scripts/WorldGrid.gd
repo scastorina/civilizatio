@@ -9,6 +9,8 @@ var _tiles: Array = []
 var _owners: Array = []
 var _presence: Array = []
 var _structures: Array = []
+var _fortifications: Array = []
+var _improvements: Array = []
 
 func _init(p_width: int, p_height: int) -> void:
 	width = p_width
@@ -29,17 +31,25 @@ func _clear_owners() -> void:
 	_owners.clear()
 	_presence.clear()
 	_structures.clear()
+	_fortifications.clear()
+	_improvements.clear()
 	for _y in range(height):
 		var orow: Array = []
 		var prow: Array = []
 		var srow: Array = []
+		var frow: Array = []
+		var irow: Array = []
 		for _x in range(width):
 			orow.append("")
 			prow.append(0)
 			srow.append("")
+			frow.append(0)
+			irow.append("")
 		_owners.append(orow)
 		_presence.append(prow)
 		_structures.append(srow)
+		_fortifications.append(frow)
+		_improvements.append(irow)
 
 func get_owner(cell: Vector2i) -> String:
 	if not is_in_bounds(cell):
@@ -53,6 +63,8 @@ func set_owner(cell: Vector2i, species: String) -> void:
 		_owners[cell.y][cell.x] = species
 		_presence[cell.y][cell.x] = 0
 		_structures[cell.y][cell.x] = ""
+		_fortifications[cell.y][cell.x] = 0
+		_improvements[cell.y][cell.x] = ""
 
 func tick_presence(cell: Vector2i, species: String) -> void:
 	if not is_in_bounds(cell):
@@ -72,6 +84,42 @@ func get_structure(cell: Vector2i) -> String:
 	if not is_in_bounds(cell):
 		return ""
 	return _structures[cell.y][cell.x]
+
+func get_fortification(cell: Vector2i) -> int:
+	if not is_in_bounds(cell):
+		return 0
+	return _fortifications[cell.y][cell.x] as int
+
+func update_fortification(cell: Vector2i, species: String, tech_level: int) -> int:
+	if not is_in_bounds(cell):
+		return 0
+	if _owners[cell.y][cell.x] != species:
+		return get_fortification(cell)
+	var current := _fortifications[cell.y][cell.x] as int
+	var structure := get_structure(cell)
+	var presence := _presence[cell.y][cell.x] as int
+	var target_level := current
+
+	if structure != "" and presence >= 60:
+		target_level = maxi(target_level, 1)
+	if (structure == "village" or structure == "town") and tech_level >= 1 and presence >= 220:
+		target_level = maxi(target_level, 2)
+	if structure == "town" and tech_level >= 3 and presence >= 520:
+		target_level = maxi(target_level, 3)
+
+	if target_level != current:
+		_fortifications[cell.y][cell.x] = target_level
+	return _fortifications[cell.y][cell.x] as int
+
+func get_improvement(cell: Vector2i) -> String:
+	if not is_in_bounds(cell):
+		return ""
+	return _improvements[cell.y][cell.x]
+
+func set_improvement(cell: Vector2i, improvement: String) -> void:
+	if not is_in_bounds(cell):
+		return
+	_improvements[cell.y][cell.x] = improvement
 
 func _generate_random() -> void:
 	_tiles.clear()

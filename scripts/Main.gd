@@ -33,6 +33,7 @@ var world_year := 0
 
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
+const FORTIFICATION_NAMES: Array[String] = ["sin defensa", "valla de madera", "muralla de piedra", "bastion de hierro"]
 const SPECIES_RELIGIONS: Dictionary = {
 	"Humanos": "Fe Sagrada",
 	"Elfos":   "Sendero Eterno",
@@ -47,18 +48,21 @@ var last_painted_cell := Vector2i(-1, -1)
 var _panning := false
 var _pan_origin := Vector2.ZERO
 var _cam_origin := Vector2.ZERO
-var _fire_cells: Dictionary = {}
-var _effects: Array[Dictionary] = []
 var _trade_routes: Array[Dictionary] = []
 var _relations: Dictionary = {}
 var _war_pairs: Dictionary = {}
 var _alliance_pairs: Dictionary = {}
+var _battle_markers: Array[Dictionary] = []
 
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
+const WorldEffectsScript = preload("res://scripts/WorldEffects.gd")
 
 var ui: GameUI
 var hud: Node2D
 var camera: Camera2D
+var world_effects = WorldEffectsScript.new()
+var _fire_cells: Dictionary = world_effects.fire_cells
+var _effects: Array[Dictionary] = world_effects.effects
 
 func _ready() -> void:
 	rng.randomize()
@@ -103,17 +107,16 @@ func _process(delta: float) -> void:
 		_resolve_combat()
 		_decay_dead_territories()
 		_update_technology()
-		_tick_fire()
-		_tick_plague()
-		_advance_effects()
-		_update_trade()
+		world_effects.tick(world_grid, humans, rng)
+		_update_trade_v2()
 		_update_religions()
 		_update_diplomacy()
+		_advance_battle_markers()
 		ticked = true
 	if ticked:
 		queue_redraw()
 		_refresh_hud()
-	elif not _trade_routes.is_empty() or not _effects.is_empty() or not _fire_cells.is_empty():
+	elif not _trade_routes.is_empty() or world_effects.has_active_visuals() or not _battle_markers.is_empty():
 		queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -189,12 +192,12 @@ func _regenerate_world() -> void:
 	_chronicle.clear()
 	_chronicle_colors.clear()
 	_known_kingdoms.clear()
-	_fire_cells.clear()
-	_effects.clear()
+	world_effects.reset()
 	_trade_routes.clear()
 	_relations.clear()
 	_war_pairs.clear()
 	_alliance_pairs.clear()
+	_battle_markers.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
@@ -251,11 +254,15 @@ func _resolve_combat() -> void:
 			if _alliance_pairs.has(pair_key):
 				continue
 			var def_bonus: float = _species_defense.get(target_owner, 1.0)
+			var fort_level := world_grid.get_fortification(target)
 			var tech_atk := 1.25 if (_species_tech.get(human.species_name, 0) as int) >= 2 else 1.0
 			var tech_def := 2.0  if (_species_tech.get(target_owner, 0) as int) >= 3 else 1.0
 			var war_bonus := 1.5 if _war_pairs.has(pair_key) else 1.0
-			var chance := _conquest_chance(world_grid.get_structure(target)) * human.combat_bonus * tech_atk * war_bonus / (def_bonus * tech_def)
-			if rng.randf() < chance:
+			var chance := _conquest_chance(world_grid.get_structure(target), fort_level) * human.combat_bonus * tech_atk * war_bonus / (def_bonus * tech_def)
+			var success := rng.randf() < chance
+			if _war_pairs.has(pair_key) or fort_level > 0 or success:
+				_record_battle_marker(human.grid_position, target, human.species_name, target_owner, success, fort_level)
+			if success:
 				world_grid.set_owner(target, human.species_name)
 				human.battles_won += 1
 				_set_relation(human.species_name, target_owner, _get_relation(human.species_name, target_owner) - 0.015)
@@ -264,12 +271,13 @@ func _resolve_combat() -> void:
 					human.hero_name = _generate_hero_name(human.species_name, human.battles_won ^ human.age_ticks ^ human.grid_position.x)
 					_log_event("Año %d: ¡%s se convirtió en leyenda de los %s!" % [world_year, human.hero_name, human.species_name], human.species_name)
 
-func _conquest_chance(structure: String) -> float:
+func _conquest_chance(structure: String, fort_level: int) -> float:
+	var base := 0.05
 	match structure:
-		"camp":    return 0.03
-		"village": return 0.02
-		"town":    return 0.01
-		_:         return 0.05
+		"camp":    base = 0.03
+		"village": base = 0.02
+		"town":    base = 0.01
+	return base / (1.0 + float(fort_level) * 0.75)
 
 func _update_evolution() -> void:
 	var to_remove: Array[Human] = []
@@ -277,15 +285,20 @@ func _update_evolution() -> void:
 		var cell := human.grid_position
 		human.update_evolution(world_grid.get_biome(cell))
 		var prev_structure := world_grid.get_structure(cell)
+		var prev_fort := world_grid.get_fortification(cell)
 		world_grid.tick_presence(cell, human.species_name)
-		if (_species_tech.get(human.species_name, 0) as int) >= 1:
+		var tech_level := _species_tech.get(human.species_name, 0) as int
+		if tech_level >= 1:
 			world_grid.tick_presence(cell, human.species_name)
 		var new_structure := world_grid.get_structure(cell)
+		var new_fort := world_grid.update_fortification(cell, human.species_name, tech_level)
 		if new_structure != prev_structure:
 			match new_structure:
 				"camp":   _log_event("Año %d: Los %s establecieron un campamento" % [world_year, human.species_name], human.species_name)
 				"village":_log_event("Año %d: Los %s fundaron una aldea" % [world_year, human.species_name], human.species_name)
 				"town":   _log_event("Año %d: ¡Los %s erigieron una ciudad!" % [world_year, human.species_name], human.species_name)
+		if new_fort > prev_fort:
+			_log_event("AÃ±o %d: Los %s levantaron %s" % [world_year, human.species_name, _fortification_name(new_fort)], human.species_name)
 		match world_grid.get_structure(cell):
 			"village": human.evolution_score += 0.02
 			"town":    human.evolution_score += 0.05
@@ -302,6 +315,7 @@ func _update_evolution() -> void:
 	for dead2 in to_remove:
 		if not living_after.has(dead2.species_name):
 			_log_event("Año %d: ¡Los %s han sido erradicados del mundo!" % [world_year, dead2.species_name], dead2.species_name)
+	_update_settlement_infrastructure()
 	if humans.size() < MAX_HUMANS:
 		for human in humans.duplicate():
 			var repro_threshold := 10.0 if (_species_tech.get(human.species_name, 0) as int) >= 3 else 15.0
@@ -344,6 +358,137 @@ func _log_event(text: String, species: String) -> void:
 	if _chronicle.size() > CHRONICLE_MAX:
 		_chronicle.pop_front()
 		_chronicle_colors.pop_front()
+
+func _fortification_name(level: int) -> String:
+	return FORTIFICATION_NAMES[clampi(level, 0, FORTIFICATION_NAMES.size() - 1)]
+
+func _record_battle_marker(from_cell: Vector2i, to_cell: Vector2i, attacker: String, defender: String, success: bool, fort_level: int) -> void:
+	_battle_markers.append({
+		"from": from_cell,
+		"to": to_cell,
+		"attacker": attacker,
+		"defender": defender,
+		"success": success,
+		"fort": fort_level,
+		"age": 0,
+		"max_age": 12,
+	})
+	if _battle_markers.size() > 90:
+		_battle_markers.pop_front()
+
+func _advance_battle_markers() -> void:
+	var to_remove: Array[int] = []
+	for i in _battle_markers.size():
+		_battle_markers[i]["age"] = (_battle_markers[i]["age"] as int) + 1
+		if (_battle_markers[i]["age"] as int) >= (_battle_markers[i]["max_age"] as int):
+			to_remove.append(i)
+	for i in range(to_remove.size() - 1, -1, -1):
+		_battle_markers.remove_at(to_remove[i])
+
+func _has_adjacent_biome(cell: Vector2i, biome: String) -> bool:
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for dir in dirs:
+		if world_grid.get_biome(cell + dir) == biome:
+			return true
+	return false
+
+func _adjacent_water_cell(cell: Vector2i) -> Vector2i:
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for dir in dirs:
+		var next := cell + dir
+		if world_grid.get_biome(next) == "water":
+			return next
+	return Vector2i(-1, -1)
+
+func _nearest_settlement_core(cell: Vector2i, owner: String) -> Dictionary:
+	var best: Dictionary = {}
+	var best_distance := 999
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			var candidate := cell + Vector2i(dx, dy)
+			if world_grid.get_owner(candidate) != owner:
+				continue
+			var structure := world_grid.get_structure(candidate)
+			if structure == "":
+				continue
+			var score := 0
+			match structure:
+				"town": score = 0
+				"village": score = 1
+				"camp": score = 2
+				_: score = 3
+			var distance := absi(dx) + absi(dy) + score
+			if distance < best_distance:
+				best_distance = distance
+				best = {
+					"cell": candidate,
+					"structure": structure,
+					"distance": absi(dx) + absi(dy),
+				}
+	return best
+
+func _planned_improvement(cell: Vector2i, owner: String) -> String:
+	var nearby := _nearest_settlement_core(cell, owner)
+	if nearby.is_empty():
+		return ""
+	var structure := world_grid.get_structure(cell)
+	var core_structure := nearby["structure"] as String
+	var distance := nearby["distance"] as int
+	var tech_level := _species_tech.get(owner, 0) as int
+	var biome := world_grid.get_biome(cell)
+	var near_water := _has_adjacent_biome(cell, "water")
+	var near_mountain := _has_adjacent_biome(cell, "mountain")
+
+	if structure == "town" and near_water and tech_level >= 1:
+		return "dock"
+	if structure in ["village", "town"] and near_mountain and tech_level >= 1:
+		return "mine"
+	if structure != "":
+		return ""
+
+	if core_structure == "town" and near_water and distance <= 1 and tech_level >= 1:
+		return "dock"
+	if near_mountain and distance <= 2 and tech_level >= 1:
+		return "mine"
+	if (biome == "grass" or biome == "sand") and distance <= 2:
+		return "farm"
+	if core_structure in ["village", "town"] and distance <= 1:
+		return "housing"
+	return ""
+
+func _update_settlement_infrastructure() -> void:
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			var owner := world_grid.get_owner(cell)
+			if owner == "":
+				world_grid.set_improvement(cell, "")
+				continue
+			world_grid.set_improvement(cell, _planned_improvement(cell, owner))
+
+func _gather_ports() -> Dictionary:
+	var ports: Dictionary = {}
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			if world_grid.get_improvement(cell) != "dock":
+				continue
+			var owner := world_grid.get_owner(cell)
+			var water_cell := _adjacent_water_cell(cell)
+			if owner == "" or water_cell == Vector2i(-1, -1):
+				continue
+			if not ports.has(owner):
+				ports[owner] = []
+			(ports[owner] as Array).append({"land": cell, "water": water_cell})
+	return ports
+
+func _append_trade_route_if_missing(routes: Array[Dictionary], route: Dictionary) -> void:
+	for existing: Dictionary in routes:
+		if existing["mode"] != route["mode"]:
+			continue
+		if (existing["from"] == route["from"] and existing["to"] == route["to"]) or (existing["from"] == route["to"] and existing["to"] == route["from"]):
+			return
+	routes.append(route)
 
 func _generate_hero_name(species: String, seed: int) -> String:
 	var h := seed & 0x7FFFFFFF
@@ -535,15 +680,96 @@ func _update_trade() -> void:
 				human.evolution_score += 0.01
 				break
 
+func _update_trade_v2() -> void:
+	var towns: Dictionary = {}
+	var ports := _gather_ports()
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			if world_grid.get_structure(cell) == "town":
+				var owner := world_grid.get_owner(cell)
+				if owner != "":
+					if not towns.has(owner):
+						towns[owner] = []
+					(towns[owner] as Array).append(cell)
+
+	var new_routes: Array[Dictionary] = []
+	for species: String in towns.keys():
+		var sp_towns: Array = towns[species]
+		for i in sp_towns.size():
+			var best_dist := 999999.0
+			var best_j := -1
+			for j in sp_towns.size():
+				if j == i:
+					continue
+				var dist := (sp_towns[i] as Vector2i).distance_to(sp_towns[j] as Vector2i)
+				if dist < best_dist and dist < 35.0:
+					best_dist = dist
+					best_j = j
+			if best_j < 0:
+				continue
+			var a: Vector2i = sp_towns[i] as Vector2i
+			var b: Vector2i = sp_towns[best_j] as Vector2i
+			_append_trade_route_if_missing(new_routes, {"from": a, "to": b, "species": species, "mode": "land"})
+
+	for species: String in ports.keys():
+		var sp_ports: Array = ports[species]
+		for i in sp_ports.size():
+			var best_dist := 999999.0
+			var best_j := -1
+			for j in sp_ports.size():
+				if j == i:
+					continue
+				var from_water := (sp_ports[i] as Dictionary)["water"] as Vector2i
+				var to_water := (sp_ports[j] as Dictionary)["water"] as Vector2i
+				var dist := from_water.distance_to(to_water)
+				if dist < best_dist and dist < 55.0:
+					best_dist = dist
+					best_j = j
+			if best_j < 0:
+				continue
+			var port_a: Dictionary = sp_ports[i] as Dictionary
+			var port_b: Dictionary = sp_ports[best_j] as Dictionary
+			_append_trade_route_if_missing(new_routes, {
+				"from": port_a["water"] as Vector2i,
+				"to": port_b["water"] as Vector2i,
+				"species": species,
+				"mode": "sea",
+				"port_from": port_a["land"] as Vector2i,
+				"port_to": port_b["land"] as Vector2i,
+			})
+
+	for r: Dictionary in new_routes:
+		var existed := false
+		for old: Dictionary in _trade_routes:
+			if old.get("mode", "land") == r.get("mode", "land") and ((old["from"] == r["from"] and old["to"] == r["to"]) or (old["from"] == r["to"] and old["to"] == r["from"])):
+				existed = true
+				break
+		if not existed:
+			if r.get("mode", "land") == "sea":
+				_log_event("Ano %d: Los %s botaron una flota comercial" % [world_year, r["species"] as String], r["species"] as String)
+			else:
+				_log_event("AÃ±o %d: Los %s abrieron una ruta comercial" % [world_year, r["species"] as String], r["species"] as String)
+
+	_trade_routes = new_routes
+
+	var trade_hubs: Dictionary = {}
+	for r: Dictionary in _trade_routes:
+		if r.get("mode", "land") == "sea":
+			trade_hubs[r["port_from"] as Vector2i] = true
+			trade_hubs[r["port_to"] as Vector2i] = true
+		else:
+			trade_hubs[r["from"] as Vector2i] = true
+			trade_hubs[r["to"] as Vector2i] = true
+	for human in humans:
+		for hub_cell: Vector2i in trade_hubs.keys():
+			if (human.grid_position - hub_cell).length() <= 2.0:
+				human.evolution_score += 0.015 if world_grid.get_improvement(hub_cell) == "dock" else 0.01
+				break
+
 func _apply_power_at(cell: Vector2i) -> void:
 	var power: String = GameUI.POWERS[ui.selected_power]
-	match power:
-		"meteor":   _power_meteor(cell)
-		"lightning":_power_lightning(cell)
-		"fire":     _power_fire(cell)
-		"plague":   _power_plague(cell)
-		"rain":     _power_rain(cell)
-		"blessing": _power_blessing(cell)
+	world_effects.apply_power(power, cell, world_grid, humans, world_year, Callable(self, "_log_event"))
 
 func _power_meteor(center: Vector2i) -> void:
 	_effects.append({"type": "impact", "cell": center, "age": 0, "max_age": 20})
@@ -685,6 +911,26 @@ func _draw() -> void:
 				"village": _draw_village(cx, cy, sc)
 				"town":    _draw_town(cx, cy, sc)
 
+	# Improvements around settlements
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var imp_cell := Vector2i(x, y)
+			var improvement := world_grid.get_improvement(imp_cell)
+			if improvement == "":
+				continue
+			var owner := world_grid.get_owner(imp_cell)
+			var sc: Color = _species_colors.get(owner, Color.WHITE)
+			var cx := (x + 0.5) * TILE_SIZE
+			var cy := (y + 0.5) * TILE_SIZE
+			match improvement:
+				"housing": _draw_housing(cx, cy, sc)
+				"farm": _draw_farm(cx, cy, sc)
+				"mine": _draw_mine(cx, cy, sc)
+				"dock": _draw_dock(cx, cy, sc)
+
+	for cluster in _find_settlement_clusters():
+		_draw_settlement_perimeter(cluster)
+
 	# Territory borders
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
@@ -694,14 +940,10 @@ func _draw() -> void:
 			var bc: Color = (_species_colors.get(owner, Color.WHITE) as Color).lightened(0.35)
 			var px := float(x * TILE_SIZE)
 			var py := float(y * TILE_SIZE)
-			if world_grid.get_owner(Vector2i(x + 1, y)) != owner:
-				draw_line(Vector2(px + TILE_SIZE, py), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc, 1.5)
-			if world_grid.get_owner(Vector2i(x - 1, y)) != owner:
-				draw_line(Vector2(px, py), Vector2(px, py + TILE_SIZE), bc, 1.5)
-			if world_grid.get_owner(Vector2i(x, y + 1)) != owner:
-				draw_line(Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc, 1.5)
-			if world_grid.get_owner(Vector2i(x, y - 1)) != owner:
-				draw_line(Vector2(px, py), Vector2(px + TILE_SIZE, py), bc, 1.5)
+			_draw_border_segment(owner, Vector2i(x, y), Vector2i(x + 1, y), Vector2(px + TILE_SIZE, py), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc)
+			_draw_border_segment(owner, Vector2i(x, y), Vector2i(x - 1, y), Vector2(px, py), Vector2(px, py + TILE_SIZE), bc)
+			_draw_border_segment(owner, Vector2i(x, y), Vector2i(x, y + 1), Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), bc)
+			_draw_border_segment(owner, Vector2i(x, y), Vector2i(x, y - 1), Vector2(px, py), Vector2(px + TILE_SIZE, py), bc)
 
 	# Fire overlay
 	for cell: Vector2i in _fire_cells.keys():
@@ -744,28 +986,94 @@ func _draw() -> void:
 				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.95, 0.3, balpha * 0.4))
 				draw_circle(Vector2(cx, cy), brad, Color(1.0, 0.9, 0.2, balpha * 0.6), false, 2.0)
 
+	# Active battle markers
+	for marker: Dictionary in _battle_markers:
+		var from_cell: Vector2i = marker["from"] as Vector2i
+		var to_cell: Vector2i = marker["to"] as Vector2i
+		var attacker: String = marker["attacker"] as String
+		var defender: String = marker["defender"] as String
+		var success: bool = marker["success"] as bool
+		var fort: int = marker["fort"] as int
+		var age: int = marker["age"] as int
+		var max_age: int = marker["max_age"] as int
+		var t_battle := float(age) / float(max_age)
+		var attack_color := (_species_colors.get(attacker, Color(1.0, 0.4, 0.4)) as Color).lightened(0.25)
+		var defend_color := (_species_colors.get(defender, Color(1.0, 0.8, 0.4)) as Color).lightened(0.10)
+		var alpha_battle := lerpf(0.95, 0.0, t_battle)
+		var a_pos := Vector2((from_cell.x + 0.5) * TILE_SIZE, (from_cell.y + 0.5) * TILE_SIZE)
+		var b_pos := Vector2((to_cell.x + 0.5) * TILE_SIZE, (to_cell.y + 0.5) * TILE_SIZE)
+		var mid := a_pos.lerp(b_pos, 0.5)
+		draw_line(a_pos, b_pos, Color(attack_color.r, attack_color.g, attack_color.b, alpha_battle * 0.55), 1.5)
+		draw_line(mid + Vector2(-3, -3), mid + Vector2(3, 3), Color(1.0, 0.95, 0.8, alpha_battle), 2.0)
+		draw_line(mid + Vector2(-3, 3), mid + Vector2(3, -3), Color(1.0, 0.95, 0.8, alpha_battle), 2.0)
+		if fort > 0:
+			draw_circle(b_pos, 4.5 + fort, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.18))
+			draw_arc(b_pos, 5.5 + fort, 0.0, TAU, 18, Color(defend_color.r, defend_color.g, defend_color.b, alpha_battle * 0.85), 1.5)
+		if success:
+			draw_circle(mid, 2.6, Color(1.0, 0.45, 0.20, alpha_battle))
+		else:
+			draw_circle(mid, 2.0, Color(0.95, 0.95, 1.0, alpha_battle * 0.9))
+
 	# Trade routes
 	var anim_t := fmod(float(Time.get_ticks_msec()) / 300.0, 1.0)
 	for route: Dictionary in _trade_routes:
 		var ra: Vector2i = route["from"] as Vector2i
 		var rb: Vector2i = route["to"] as Vector2i
 		var rsp: String  = route["species"] as String
+		var mode := route.get("mode", "land") as String
 		var rc: Color    = (_species_colors.get(rsp, Color.WHITE) as Color).lightened(0.25)
-		rc.a = 0.60
+		rc.a = 0.72 if mode == "sea" else 0.60
 		var wp_a := Vector2((ra.x + 0.5) * TILE_SIZE, (ra.y + 0.5) * TILE_SIZE)
 		var wp_b := Vector2((rb.x + 0.5) * TILE_SIZE, (rb.y + 0.5) * TILE_SIZE)
 		var total_len := wp_a.distance_to(wp_b)
 		var dir := (wp_b - wp_a).normalized()
-		var period := 7.0
+		var period := 6.0 if mode == "sea" else 7.0
 		var seg_start := anim_t * period
 		while seg_start < total_len:
-			var seg_end := minf(seg_start + 4.0, total_len)
-			draw_line(wp_a + dir * seg_start, wp_a + dir * seg_end, rc, 1.5)
+			var seg_end := minf(seg_start + (6.0 if mode == "sea" else 4.0), total_len)
+			draw_line(wp_a + dir * seg_start, wp_a + dir * seg_end, rc, 2.0 if mode == "sea" else 1.5)
 			seg_start += period
 		var caravan_t := fmod(float(Time.get_ticks_msec()) / 2000.0, 1.0)
 		var caravan_pos := wp_a.lerp(wp_b, caravan_t)
-		draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
-		draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
+		if mode == "sea":
+			draw_line(caravan_pos + Vector2(-2.5, 2.0), caravan_pos + Vector2(2.5, 2.0), Color(0.82, 0.56, 0.28, 0.95), 1.5)
+			draw_colored_polygon(PackedVector2Array([
+				caravan_pos + Vector2(-2.5, 1.5),
+				caravan_pos + Vector2(0.0, -2.5),
+				caravan_pos + Vector2(2.5, 1.5),
+			]), Color(0.92, 0.92, 0.86, 0.92))
+		else:
+			draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
+			draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
+
+	var ports_for_war := _gather_ports()
+	for war_key: String in _war_pairs.keys():
+		var parts := war_key.split("|")
+		if parts.size() != 2:
+			continue
+		var a_ports: Array = ports_for_war.get(parts[0], [])
+		var b_ports: Array = ports_for_war.get(parts[1], [])
+		if a_ports.is_empty() or b_ports.is_empty():
+			continue
+		var best_a: Dictionary = {}
+		var best_b: Dictionary = {}
+		var best_dist := 999999.0
+		for pa: Dictionary in a_ports:
+			for pb: Dictionary in b_ports:
+				var dist := (pa["water"] as Vector2i).distance_to(pb["water"] as Vector2i)
+				if dist < best_dist:
+					best_dist = dist
+					best_a = pa
+					best_b = pb
+		if best_a.is_empty() or best_b.is_empty() or best_dist > 60.0:
+			continue
+		var wa := Vector2(((best_a["water"] as Vector2i).x + 0.5) * TILE_SIZE, ((best_a["water"] as Vector2i).y + 0.5) * TILE_SIZE)
+		var wb := Vector2(((best_b["water"] as Vector2i).x + 0.5) * TILE_SIZE, ((best_b["water"] as Vector2i).y + 0.5) * TILE_SIZE)
+		var war_pulse := 0.45 + 0.55 * sin(float(Time.get_ticks_msec()) / 220.0)
+		draw_line(wa, wb, Color(1.0, 0.22, 0.10, 0.25 + 0.25 * war_pulse), 2.2)
+		var raid_pos := wa.lerp(wb, fmod(float(Time.get_ticks_msec()) / 2300.0, 1.0))
+		draw_circle(raid_pos, 3.0, Color(1.0, 0.35, 0.15, 0.85))
+		draw_line(raid_pos + Vector2(-3, 2), raid_pos + Vector2(3, 2), Color(0.35, 0.18, 0.08, 0.9), 1.2)
 
 	# Alliance lines between allied species towns
 	if not _alliance_pairs.is_empty():
@@ -959,6 +1267,138 @@ func _territory_name(seed: String, species: String) -> String:
 			name = species
 	_territory_names[seed] = name
 	return name
+
+func _find_settlement_clusters() -> Array:
+	var clusters: Array = []
+	var visited := {}
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var start := Vector2i(x, y)
+			if visited.has(start):
+				continue
+			var owner := world_grid.get_owner(start)
+			var structure := world_grid.get_structure(start)
+			var improvement := world_grid.get_improvement(start)
+			if owner == "" or (structure == "" and improvement == ""):
+				visited[start] = true
+				continue
+			var queue: Array[Vector2i] = [start]
+			var cells: Array[Vector2i] = []
+			var max_fort := 0
+			while not queue.is_empty():
+				var cell: Vector2i = queue.pop_back()
+				if visited.has(cell):
+					continue
+				if world_grid.get_owner(cell) != owner:
+					continue
+				if world_grid.get_structure(cell) == "" and world_grid.get_improvement(cell) == "":
+					continue
+				visited[cell] = true
+				cells.append(cell)
+				max_fort = maxi(max_fort, world_grid.get_fortification(cell))
+				for dir in dirs:
+					var next := cell + dir
+					if world_grid.is_in_bounds(next) and not visited.has(next):
+						queue.push_back(next)
+			if cells.size() > 0:
+				clusters.append({"species": owner, "cells": cells, "fort": max_fort})
+	return clusters
+
+func _draw_settlement_perimeter(cluster: Dictionary) -> void:
+	var fort_level := cluster["fort"] as int
+	if fort_level <= 0:
+		return
+	var wall_color := Color(0.58, 0.36, 0.18)
+	var wall_width := 1.4
+	match fort_level:
+		2:
+			wall_color = Color(0.68, 0.70, 0.74)
+			wall_width = 1.8
+		3:
+			wall_color = Color(0.52, 0.56, 0.62)
+			wall_width = 2.2
+	var cell_set := {}
+	for cell: Vector2i in cluster["cells"]:
+		cell_set[cell] = true
+	for cell: Vector2i in cluster["cells"]:
+		var px := float(cell.x * TILE_SIZE)
+		var py := float(cell.y * TILE_SIZE)
+		if not cell_set.has(cell + Vector2i(1, 0)):
+			draw_line(Vector2(px + TILE_SIZE, py), Vector2(px + TILE_SIZE, py + TILE_SIZE), wall_color, wall_width)
+		if not cell_set.has(cell + Vector2i(-1, 0)):
+			draw_line(Vector2(px, py), Vector2(px, py + TILE_SIZE), wall_color, wall_width)
+		if not cell_set.has(cell + Vector2i(0, 1)):
+			draw_line(Vector2(px, py + TILE_SIZE), Vector2(px + TILE_SIZE, py + TILE_SIZE), wall_color, wall_width)
+		if not cell_set.has(cell + Vector2i(0, -1)):
+			draw_line(Vector2(px, py), Vector2(px + TILE_SIZE, py), wall_color, wall_width)
+
+func _draw_housing(cx: float, cy: float, sc: Color) -> void:
+	var base := Color(0.84, 0.78, 0.66)
+	draw_rect(Rect2(cx - 2.8, cy - 0.5, 5.6, 4.0), base)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(cx, cy - 4.0), Vector2(cx - 3.5, cy - 0.5), Vector2(cx + 3.5, cy - 0.5)
+	]), sc.lerp(Color(0.65, 0.24, 0.18), 0.45))
+
+func _draw_farm(cx: float, cy: float, _sc: Color) -> void:
+	var soil := Color(0.58, 0.40, 0.18, 0.85)
+	for oy in [-3.0, -1.0, 1.0, 3.0]:
+		draw_line(Vector2(cx - 5.5, cy + oy), Vector2(cx + 5.5, cy + oy), soil, 1.0)
+	for sx in [-4.0, -1.5, 1.0, 3.5]:
+		draw_line(Vector2(cx + sx, cy - 4.0), Vector2(cx + sx + 1.2, cy - 5.2), Color(0.55, 0.82, 0.28, 0.9), 1.0)
+
+func _draw_mine(cx: float, cy: float, _sc: Color) -> void:
+	var rock := Color(0.48, 0.48, 0.52)
+	draw_rect(Rect2(cx - 4.5, cy - 2.5, 9.0, 5.0), rock)
+	draw_line(Vector2(cx - 5.0, cy + 4.0), Vector2(cx - 1.0, cy - 3.5), Color(0.55, 0.34, 0.18), 1.4)
+	draw_line(Vector2(cx - 1.0, cy - 3.5), Vector2(cx + 3.0, cy + 4.0), Color(0.78, 0.78, 0.80), 1.2)
+
+func _draw_dock(cx: float, cy: float, sc: Color) -> void:
+	var wood := Color(0.58, 0.38, 0.20)
+	draw_line(Vector2(cx - 5.0, cy + 3.0), Vector2(cx + 5.0, cy + 3.0), wood, 1.8)
+	for px in [-4.0, -1.0, 2.0]:
+		draw_line(Vector2(cx + px, cy + 3.0), Vector2(cx + px, cy + 6.0), wood, 1.2)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(cx - 2.8, cy - 1.5), Vector2(cx, cy - 5.0), Vector2(cx + 2.8, cy - 1.5)
+	]), sc.lightened(0.35))
+
+func _draw_border_segment(owner: String, cell: Vector2i, neighbor: Vector2i, a: Vector2, b: Vector2, default_color: Color) -> void:
+	var neighbor_owner := world_grid.get_owner(neighbor)
+	if neighbor_owner == owner:
+		return
+	if neighbor_owner != "":
+		var pair_key := _diplomacy_key(owner, neighbor_owner)
+		if _war_pairs.has(pair_key):
+			var pulse := 0.55 + 0.45 * sin(float(Time.get_ticks_msec()) / 140.0 + float(cell.x + cell.y))
+			var war_color := Color(1.0, 0.20 + 0.30 * pulse, 0.10, 0.55 + 0.30 * pulse)
+			draw_line(a, b, war_color, 3.0)
+			var mid := a.lerp(b, 0.5)
+			var attack_dir := (b - a).normalized()
+			var normal := Vector2(-attack_dir.y, attack_dir.x)
+			draw_line(mid - normal * 2.5, mid + attack_dir * 3.0, Color(1.0, 0.9, 0.35, 0.9), 1.4)
+			draw_line(mid + normal * 2.5, mid - attack_dir * 3.0, Color(1.0, 0.9, 0.35, 0.9), 1.4)
+			return
+	draw_line(a, b, default_color, 1.5)
+
+func _draw_fortification(cx: float, cy: float, level: int, sc: Color) -> void:
+	match level:
+		1:
+			var wood := Color(0.56, 0.36, 0.18)
+			draw_rect(Rect2(cx - 7.0, cy - 6.5, 14.0, 11.0), wood, false, 1.2)
+			for px in [-5.5, -3.0, -0.5, 2.0, 4.5]:
+				draw_line(Vector2(cx + px, cy + 4.8), Vector2(cx + px, cy - 6.5), wood.lightened(0.08), 1.2)
+		2:
+			var stone := Color(0.62, 0.64, 0.68)
+			draw_rect(Rect2(cx - 7.5, cy - 7.0, 15.0, 12.0), stone, false, 1.8)
+			for px in [-5.5, -2.5, 0.5, 3.5]:
+				draw_rect(Rect2(cx + px, cy - 8.2, 1.7, 2.0), stone.darkened(0.08))
+		3:
+			var iron := Color(0.46, 0.50, 0.56)
+			var glow := sc.lightened(0.15)
+			draw_rect(Rect2(cx - 8.0, cy - 7.5, 16.0, 13.0), iron, false, 2.2)
+			draw_rect(Rect2(cx - 5.0, cy - 9.0, 10.0, 2.0), glow.darkened(0.2))
+			for px in [-5.5, -2.0, 1.5, 5.0]:
+				draw_circle(Vector2(cx + px, cy - 1.5), 0.8, glow)
 
 func _draw_camp(cx: float, cy: float, sc: Color) -> void:
 	var tent := PackedVector2Array([
