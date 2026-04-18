@@ -51,6 +51,7 @@ func _process(delta: float) -> void:
 		move_tick_accumulator -= MOVE_TICK_SECONDS
 		_move_humans()
 		_update_evolution()
+		_resolve_combat()
 		ticked = true
 	if ticked:
 		queue_redraw()
@@ -133,6 +134,26 @@ func _move_humans() -> void:
 		world_grid.set_owner(next, human.species_name)
 		occupied[_cell_key(next)] = true
 
+func _resolve_combat() -> void:
+	var dirs: Array[Vector2i] = [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
+	for human in humans:
+		for dir in dirs:
+			var target := human.grid_position + dir
+			if not world_grid.is_walkable(target):
+				continue
+			var target_owner := world_grid.get_owner(target)
+			if target_owner == "" or target_owner == human.species_name:
+				continue
+			if rng.randf() < _conquest_chance(world_grid.get_structure(target)):
+				world_grid.set_owner(target, human.species_name)
+
+func _conquest_chance(structure: String) -> float:
+	match structure:
+		"camp":    return 0.03
+		"village": return 0.02
+		"town":    return 0.01
+		_:         return 0.05
+
 func _update_evolution() -> void:
 	for human in humans:
 		var cell := human.grid_position
@@ -178,7 +199,7 @@ func _draw() -> void:
 	# Species stats overlay (top-left)
 	var stats := _species_stats()
 	var overlay_h := 20.0 + stats.size() * 18.0
-	draw_rect(Rect2(0, 0, 290, overlay_h), Color(0.0, 0.0, 0.0, 0.55))
+	draw_rect(Rect2(0, 0, 320, overlay_h), Color(0.0, 0.0, 0.0, 0.55))
 	var oy := 16.0
 	for line in stats:
 		draw_string(ThemeDB.fallback_font, Vector2(8, oy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
@@ -187,28 +208,32 @@ func _draw() -> void:
 func _species_stats() -> Array[String]:
 	var result: Array[String] = []
 	var stats: Dictionary = {}
+	for sp: Dictionary in SPECIES_LIBRARY:
+		stats[sp["name"] as String] = {"pop": 0, "evo": 0.0, "tiles": 0, "buildings": 0}
 	for human in humans:
-		if not stats.has(human.species_name):
-			stats[human.species_name] = {"count": 0, "evo": 0.0}
-		stats[human.species_name]["count"] += 1
-		stats[human.species_name]["evo"] += human.evolution_score
-	for sp_name: String in stats.keys():
-		var count: int = stats[sp_name]["count"]
-		var evo: float = stats[sp_name]["evo"] / maxf(float(count), 1.0)
-		var buildings := _count_buildings(sp_name)
-		result.append("%s: %d pop  evo:%.1f  edif:%d" % [sp_name, count, evo, buildings])
-	if result.is_empty():
-		result.append("Sin entidades — usa tab Entidades")
-	return result
-
-func _count_buildings(species: String) -> int:
-	var count := 0
+		if stats.has(human.species_name):
+			stats[human.species_name]["pop"] += 1
+			stats[human.species_name]["evo"] += human.evolution_score
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
 			var cell := Vector2i(x, y)
-			if world_grid.get_owner(cell) == species and world_grid.get_structure(cell) != "":
-				count += 1
-	return count
+			var owner := world_grid.get_owner(cell)
+			if owner == "" or not stats.has(owner):
+				continue
+			stats[owner]["tiles"] += 1
+			if world_grid.get_structure(cell) != "":
+				stats[owner]["buildings"] += 1
+	for sp_name: String in stats.keys():
+		var pop: int = stats[sp_name]["pop"]
+		var tiles: int = stats[sp_name]["tiles"]
+		if pop == 0 and tiles == 0:
+			continue
+		var evo: float = stats[sp_name]["evo"] / maxf(float(pop), 1.0)
+		var buildings: int = stats[sp_name]["buildings"]
+		result.append("%s: %d pop  %d terr  %d edif  evo:%.1f" % [sp_name, pop, tiles, buildings, evo])
+	if result.is_empty():
+		result.append("Sin entidades — usa tab Entidades")
+	return result
 
 func _mouse_to_cell(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / TILE_SIZE)), int(floor(pos.y / TILE_SIZE)))
