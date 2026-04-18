@@ -16,6 +16,7 @@ var is_hero := false
 var hero_name := ""
 var infected := false
 var on_fire := false
+var religion := ""
 
 func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0) -> void:
 	grid_position = p_grid_position

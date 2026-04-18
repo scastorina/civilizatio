@@ -33,6 +33,12 @@ var world_year := 0
 
 const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
+const SPECIES_RELIGIONS: Dictionary = {
+	"Humanos": "Fe Sagrada",
+	"Elfos":   "Sendero Eterno",
+	"Enanos":  "Forja Divina",
+	"Orcos":   "Culto de Sangre",
+}
 
 var current_speed_idx := 1
 var current_map_idx := 0
@@ -44,6 +50,9 @@ var _cam_origin := Vector2.ZERO
 var _fire_cells: Dictionary = {}
 var _effects: Array[Dictionary] = []
 var _trade_routes: Array[Dictionary] = []
+var _relations: Dictionary = {}
+var _war_pairs: Dictionary = {}
+var _alliance_pairs: Dictionary = {}
 
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 
@@ -98,6 +107,8 @@ func _process(delta: float) -> void:
 		_tick_plague()
 		_advance_effects()
 		_update_trade()
+		_update_religions()
+		_update_diplomacy()
 		ticked = true
 	if ticked:
 		queue_redraw()
@@ -181,6 +192,9 @@ func _regenerate_world() -> void:
 	_fire_cells.clear()
 	_effects.clear()
 	_trade_routes.clear()
+	_relations.clear()
+	_war_pairs.clear()
+	_alliance_pairs.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
 	_spawn_initial_humans()
@@ -205,6 +219,7 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	var human := Human.new()
 	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred,
 		species["combat"] as float, species["defense"] as float, species["evo_rate"] as float)
+	human.religion = SPECIES_RELIGIONS.get(species["name"] as String, "") as String
 	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
 	humans.append(human)
@@ -232,13 +247,18 @@ func _resolve_combat() -> void:
 			var target_owner := world_grid.get_owner(target)
 			if target_owner == "" or target_owner == human.species_name:
 				continue
+			var pair_key := _diplomacy_key(human.species_name, target_owner)
+			if _alliance_pairs.has(pair_key):
+				continue
 			var def_bonus: float = _species_defense.get(target_owner, 1.0)
 			var tech_atk := 1.25 if (_species_tech.get(human.species_name, 0) as int) >= 2 else 1.0
 			var tech_def := 2.0  if (_species_tech.get(target_owner, 0) as int) >= 3 else 1.0
-			var chance := _conquest_chance(world_grid.get_structure(target)) * human.combat_bonus * tech_atk / (def_bonus * tech_def)
+			var war_bonus := 1.5 if _war_pairs.has(pair_key) else 1.0
+			var chance := _conquest_chance(world_grid.get_structure(target)) * human.combat_bonus * tech_atk * war_bonus / (def_bonus * tech_def)
 			if rng.randf() < chance:
 				world_grid.set_owner(target, human.species_name)
 				human.battles_won += 1
+				_set_relation(human.species_name, target_owner, _get_relation(human.species_name, target_owner) - 0.015)
 				if human.battles_won == 5 and not human.is_hero:
 					human.is_hero = true
 					human.hero_name = _generate_hero_name(human.species_name, human.battles_won ^ human.age_ticks ^ human.grid_position.x)
@@ -359,6 +379,103 @@ func _update_technology() -> void:
 		if lvl < TECH_THRESHOLDS.size() and (_species_research[sp_name] as float) >= TECH_THRESHOLDS[lvl]:
 			_species_tech[sp_name] = lvl + 1
 			_log_event("Año %d: Los %s alcanzaron tecnología nivel %d" % [world_year, sp_name, lvl + 1], sp_name)
+
+func _diplomacy_key(a: String, b: String) -> String:
+	if a < b: return a + "|" + b
+	return b + "|" + a
+
+func _get_relation(a: String, b: String) -> float:
+	return _relations.get(_diplomacy_key(a, b), 0.0) as float
+
+func _set_relation(a: String, b: String, val: float) -> void:
+	_relations[_diplomacy_key(a, b)] = clampf(val, -1.0, 1.0)
+
+func _dominant_religion(species: String) -> String:
+	var counts: Dictionary = {}
+	for h in humans:
+		if h.species_name == species and h.religion != "":
+			counts[h.religion] = (counts.get(h.religion, 0) as int) + 1
+	var best := ""
+	var best_n := 0
+	for r: String in counts.keys():
+		if (counts[r] as int) > best_n:
+			best_n = counts[r] as int
+			best = r
+	return best
+
+func _update_religions() -> void:
+	for human in humans:
+		for other in humans:
+			if other == human or other.species_name == human.species_name:
+				continue
+			if (human.grid_position - other.grid_position).length() <= 1.5:
+				if rng.randf() < 0.0004:
+					human.religion = other.religion
+
+	if world_year % 80 != 0:
+		return
+	var species_pops: Dictionary = {}
+	var species_rel_counts: Dictionary = {}
+	for h in humans:
+		if h.religion == "":
+			continue
+		if not species_pops.has(h.species_name):
+			species_pops[h.species_name] = 0
+			species_rel_counts[h.species_name] = {}
+		species_pops[h.species_name] = (species_pops[h.species_name] as int) + 1
+		var d: Dictionary = species_rel_counts[h.species_name]
+		d[h.religion] = (d.get(h.religion, 0) as int) + 1
+	for sp: String in species_rel_counts.keys():
+		var total: int = species_pops[sp] as int
+		if total < 3:
+			continue
+		var d: Dictionary = species_rel_counts[sp]
+		for r: String in d.keys():
+			var pct := float(d[r] as int) / float(total)
+			var native := SPECIES_RELIGIONS.get(sp, "") as String
+			if pct > 0.60 and r != native:
+				_log_event("Año %d: Los %s abrazan %s" % [world_year, sp, r], sp)
+
+func _update_diplomacy() -> void:
+	var living: Dictionary = {}
+	for h in humans:
+		living[h.species_name] = true
+	var sp_list: Array = living.keys()
+
+	for i in sp_list.size():
+		for j in range(i + 1, sp_list.size()):
+			var a: String = sp_list[i]
+			var b: String = sp_list[j]
+			var key := _diplomacy_key(a, b)
+			var rel := _get_relation(a, b)
+
+			if not _war_pairs.has(key):
+				rel += 0.0008
+			else:
+				rel -= 0.001
+
+			if _dominant_religion(a) == _dominant_religion(b) and _dominant_religion(a) != "":
+				rel += 0.002
+				_set_relation(a, b, rel + 0.002)
+
+			_set_relation(a, b, rel)
+			rel = _get_relation(a, b)
+
+			if rel < -0.55 and not _war_pairs.has(key) and not _alliance_pairs.has(key):
+				_war_pairs[key] = true
+				_log_event("Año %d: ¡Los %s declaran guerra a los %s!" % [world_year, a, b], a)
+
+			if _war_pairs.has(key) and rel > -0.25:
+				_war_pairs.erase(key)
+				_log_event("Año %d: Los %s y los %s firman una tregua" % [world_year, a, b], a)
+
+			if rel > 0.50 and not _alliance_pairs.has(key) and not _war_pairs.has(key):
+				_alliance_pairs[key] = true
+				_log_event("Año %d: ¡%s y %s forman una alianza sagrada!" % [world_year, a, b], a)
+
+			if _alliance_pairs.has(key) and rel < 0.15:
+				_alliance_pairs.erase(key)
+				_log_event("Año %d: La alianza entre %s y %s se disuelve" % [world_year, a, b], a)
 
 func _update_trade() -> void:
 	var towns: Dictionary = {}
@@ -650,6 +767,46 @@ func _draw() -> void:
 		draw_circle(caravan_pos, 2.8, Color(0.95, 0.80, 0.35, 0.95))
 		draw_circle(caravan_pos, 1.5, Color(0.60, 0.38, 0.12, 0.95))
 
+	# Alliance lines between allied species towns
+	if not _alliance_pairs.is_empty():
+		var sp_capitals: Dictionary = {}
+		for y2 in range(world_grid.height):
+			for x2 in range(world_grid.width):
+				var cc := Vector2i(x2, y2)
+				if world_grid.get_structure(cc) == "town":
+					var own := world_grid.get_owner(cc)
+					if own != "" and not sp_capitals.has(own):
+						sp_capitals[own] = cc
+		var pulse := 0.55 + 0.45 * sin(float(Time.get_ticks_msec()) / 600.0)
+		for ak: String in _alliance_pairs.keys():
+			var parts := ak.split("|")
+			if parts.size() < 2:
+				continue
+			var sa: String = parts[0]; var sb: String = parts[1]
+			if not sp_capitals.has(sa) or not sp_capitals.has(sb):
+				continue
+			var ca: Vector2i = sp_capitals[sa] as Vector2i
+			var cb: Vector2i = sp_capitals[sb] as Vector2i
+			var wa := Vector2((ca.x + 0.5) * TILE_SIZE, (ca.y + 0.5) * TILE_SIZE)
+			var wb := Vector2((cb.x + 0.5) * TILE_SIZE, (cb.y + 0.5) * TILE_SIZE)
+			draw_line(wa, wb, Color(1.0, 0.88, 0.20, 0.35 * pulse), 2.0)
+			draw_circle(wa, 5.0 * pulse, Color(1.0, 0.88, 0.20, 0.6 * pulse))
+			draw_circle(wb, 5.0 * pulse, Color(1.0, 0.88, 0.20, 0.6 * pulse))
+
+	# Religion symbols on towns
+	for y3 in range(world_grid.height):
+		for x3 in range(world_grid.width):
+			var tc := Vector2i(x3, y3)
+			if world_grid.get_structure(tc) != "town":
+				continue
+			var town_owner := world_grid.get_owner(tc)
+			if town_owner == "":
+				continue
+			var dom_rel := _dominant_religion(town_owner)
+			var rx := (x3 + 0.5) * TILE_SIZE
+			var ry := float(y3) * TILE_SIZE - 3.0
+			_draw_religion_symbol(rx, ry, dom_rel)
+
 	# Territory labels
 	for cluster in _find_territory_clusters():
 		var cpos: Vector2 = cluster["center"]
@@ -662,6 +819,26 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(cpos.x - tw * 0.5 + 3.0, cpos.y + 2.5),
 			name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, tc)
 
+
+func _draw_religion_symbol(cx: float, cy: float, religion: String) -> void:
+	match religion:
+		"Fe Sagrada":
+			draw_line(Vector2(cx, cy - 4), Vector2(cx, cy + 4), Color(1.0, 0.95, 0.70, 0.9), 1.5)
+			draw_line(Vector2(cx - 2.5, cy - 1.5), Vector2(cx + 2.5, cy - 1.5), Color(1.0, 0.95, 0.70, 0.9), 1.5)
+		"Sendero Eterno":
+			for si in range(5):
+				var oa := deg_to_rad(-90.0 + si * 72.0)
+				var ia := deg_to_rad(-90.0 + si * 72.0 + 36.0)
+				var pa := Vector2(cx + cos(oa) * 4.0, cy + sin(oa) * 4.0)
+				var pb := Vector2(cx + cos(ia) * 2.0, cy + sin(ia) * 2.0)
+				draw_line(pa, pb, Color(0.70, 1.0, 0.70, 0.9), 1.0)
+		"Forja Divina":
+			draw_rect(Rect2(cx - 2.5, cy - 1.5, 5.0, 3.5), Color(0.80, 0.70, 0.50, 0.9))
+			draw_line(Vector2(cx, cy - 1.5), Vector2(cx, cy - 5.0), Color(0.60, 0.50, 0.35, 0.9), 1.5)
+		"Culto de Sangre":
+			draw_circle(Vector2(cx, cy - 1.0), 3.5, Color(0.85, 0.15, 0.15, 0.80))
+			draw_line(Vector2(cx - 2.0, cy + 2.5), Vector2(cx, cy - 0.5), Color(0.85, 0.15, 0.15, 0.9), 1.5)
+			draw_line(Vector2(cx + 2.0, cy + 2.5), Vector2(cx, cy - 0.5), Color(0.85, 0.15, 0.15, 0.9), 1.5)
 
 func _species_stats() -> Array[String]:
 	var result: Array[String] = []
@@ -689,12 +866,31 @@ func _species_stats() -> Array[String]:
 		var evo: float = stats[sp_name]["evo"] / maxf(float(pop), 1.0)
 		var buildings: int = stats[sp_name]["buildings"]
 		var tech: int = _species_tech.get(sp_name, 0) as int
-		var line := "%s: %d pop  %d terr  %d edif  tec:%d  evo:%.1f" % [sp_name, pop, tiles, buildings, tech, evo]
+		var dom_rel := _dominant_religion(sp_name)
+		var line := "%s: %d pop  %d terr  tec:%d  evo:%.1f" % [sp_name, pop, tiles, tech, evo]
+		if dom_rel != "" and dom_rel != (SPECIES_RELIGIONS.get(sp_name, "") as String):
+			line += "  [" + dom_rel + "]"
 		if pop == 0 and tiles > 0:
 			line += "  [EXTINTO]"
 		result.append(line)
 	if result.is_empty():
 		result.append("Sin entidades — usa tab Entidades")
+		return result
+	var has_diplo := false
+	for key: String in _war_pairs.keys():
+		var p := key.split("|")
+		if p.size() == 2:
+			if not has_diplo:
+				result.append("── Diplomacia ──")
+				has_diplo = true
+			result.append("⚔ %s vs %s" % [p[0], p[1]])
+	for key: String in _alliance_pairs.keys():
+		var p := key.split("|")
+		if p.size() == 2:
+			if not has_diplo:
+				result.append("── Diplomacia ──")
+				has_diplo = true
+			result.append("★ %s ↔ %s" % [p[0], p[1]])
 	return result
 
 func _find_territory_clusters() -> Array:
@@ -811,13 +1007,21 @@ func _refresh_hud() -> void:
 	var stats_lines: Array[String] = []
 	var stats_colors: Array[Color] = []
 	var raw := _species_stats()
-	for sp: Dictionary in SPECIES_LIBRARY:
-		var n := sp["name"] as String
-		for line in raw:
-			if (line as String).begins_with(n):
-				stats_lines.append(line)
-				stats_colors.append((_species_colors.get(n, Color.WHITE) as Color).lightened(0.2))
-				break
+	for line: String in raw:
+		stats_lines.append(line)
+		if line.begins_with("──"):
+			stats_colors.append(Color(0.55, 0.55, 0.55))
+		elif line.begins_with("⚔"):
+			stats_colors.append(Color(1.0, 0.35, 0.35))
+		elif line.begins_with("★"):
+			stats_colors.append(Color(1.0, 0.88, 0.20))
+		else:
+			var matched_color := Color(0.75, 0.75, 0.75)
+			for sp: Dictionary in SPECIES_LIBRARY:
+				if line.begins_with(sp["name"] as String):
+					matched_color = (_species_colors.get(sp["name"] as String, Color.WHITE) as Color).lightened(0.2)
+					break
+			stats_colors.append(matched_color)
 	var hero_lines: Array[String] = []
 	var hero_colors: Array[Color] = []
 	for h in humans:
