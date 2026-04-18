@@ -2,17 +2,19 @@ extends CanvasLayer
 class_name GameUI
 
 signal biome_selected(idx: int)
-signal tool_changed(tool: String)
-signal time_speed_changed(speed: int)
-signal map_type_changed(map: String)
+signal species_selected(idx: int)
+signal time_speed_changed(idx: int)
+signal map_type_changed(idx: int)
 signal regenerate_requested()
 
-const TOOLBAR_H := 68
-const BTN := 48
-const GAP := 5
+const BAR_H := 52
+const PANEL_H := 68
+const BTN := 46
+const GAP := 4
 const PAD := 10
 
 const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain"]
+const BIOME_ICONS: Array[String] = ["~", ":", "#", "Y", "^"]
 const BIOME_COLORS: Array[Color] = [
 	Color(0.20, 0.45, 0.85),
 	Color(0.85, 0.80, 0.50),
@@ -20,113 +22,241 @@ const BIOME_COLORS: Array[Color] = [
 	Color(0.10, 0.45, 0.15),
 	Color(0.45, 0.45, 0.45),
 ]
-const BIOME_ICONS: Array[String] = ["~", ":", "#", "Y", "^"]
 
 var selected_biome := 2
-var current_tool := "paint"
-var current_speed := 1
-var current_map := "random"
+var selected_species := 0
+var current_speed_idx := 1
+var current_map_idx := 0
+var active_tab := "terrain"
 
+var _tab_btns: Dictionary = {}
 var _biome_btns: Array[Button] = []
-var _tool_btns: Dictionary = {}
+var _species_btns: Array[Button] = []
 var _speed_btns: Dictionary = {}
 var _map_btns: Dictionary = {}
+var _tool_panel: Panel
+var _terrain_content: Control
+var _entity_content: Control
+var _world_content: Control
+var _species_data: Array[Dictionary] = []
 
 func _ready() -> void:
 	layer = 10
+
+func setup_species(species: Array[Dictionary]) -> void:
+	_species_data = species
 	_build()
 
 func _build() -> void:
-	var bg := Panel.new()
-	bg.anchor_left = 0.0
-	bg.anchor_top = 1.0
-	bg.anchor_right = 1.0
-	bg.anchor_bottom = 1.0
-	bg.offset_top = -TOOLBAR_H
-	bg.offset_bottom = 0.0
-	bg.offset_left = 0.0
-	bg.offset_right = 0.0
-	var bg_style := StyleBoxFlat.new()
-	bg_style.bg_color = Color(0.07, 0.07, 0.07, 0.95)
-	bg_style.border_width_top = 2
-	bg_style.border_color = Color(0.30, 0.30, 0.30)
-	bg.add_theme_stylebox_override("panel", bg_style)
-	add_child(bg)
+	var bar := Panel.new()
+	bar.anchor_left = 0.0; bar.anchor_top = 1.0
+	bar.anchor_right = 1.0; bar.anchor_bottom = 1.0
+	bar.offset_top = -BAR_H; bar.offset_bottom = 0.0
+	bar.offset_left = 0.0; bar.offset_right = 0.0
+	_style_panel(bar, Color(0.07, 0.07, 0.07, 0.96))
+	add_child(bar)
+
+	_tool_panel = Panel.new()
+	_tool_panel.anchor_left = 0.0; _tool_panel.anchor_top = 1.0
+	_tool_panel.anchor_right = 1.0; _tool_panel.anchor_bottom = 1.0
+	_tool_panel.offset_top = -(BAR_H + PANEL_H); _tool_panel.offset_bottom = -BAR_H
+	_tool_panel.offset_left = 0.0; _tool_panel.offset_right = 0.0
+	_style_panel(_tool_panel, Color(0.10, 0.10, 0.10, 0.96))
+	add_child(_tool_panel)
+
+	_build_bar(bar)
+	_build_terrain_content()
+	_build_entity_content()
+	_build_world_content()
+	_show_tab(active_tab)
+
+func _build_bar(bar: Panel) -> void:
+	var x := float(PAD)
+	var yc := (BAR_H - BTN) / 2.0
+
+	var tabs: Array[Array] = [
+		["terrain",  "Terreno",   Color(0.55, 0.85, 0.45)],
+		["entities", "Entidades", Color(0.95, 0.70, 0.40)],
+		["world",    "Mundo",     Color(0.45, 0.70, 0.95)],
+	]
+	for td in tabs:
+		var btn := _make_tab_btn(td[1] as String, td[2] as Color)
+		btn.position = Vector2(x, yc)
+		btn.size.x = 88.0
+		bar.add_child(btn)
+		var tk: String = td[0]
+		_tab_btns[tk] = btn
+		btn.pressed.connect(func(): _on_tab(tk))
+		x += 88.0 + GAP
+
+	x += PAD; _divider(bar, x, yc); x += GAP + 4.0
+
+	var speeds: Array[Array] = [
+		[0, "||",  Color(0.95, 0.40, 0.40)],
+		[1, "1x",  Color(0.55, 0.95, 0.55)],
+		[2, "2x",  Color(0.55, 0.95, 0.55)],
+		[3, "5x",  Color(0.95, 0.95, 0.40)],
+		[4, "10x", Color(0.95, 0.60, 0.20)],
+	]
+	for sd in speeds:
+		var btn := _make_icon_btn(sd[1] as String, sd[2] as Color)
+		btn.position = Vector2(x, yc)
+		bar.add_child(btn)
+		var si: int = sd[0]
+		_speed_btns[si] = btn
+		btn.pressed.connect(func(): _on_speed(si))
+		x += BTN + GAP
+
+	x += PAD; _divider(bar, x, yc); x += GAP + 4.0
+
+	var regen := _make_icon_btn("↺ GEN", Color(1.0, 0.60, 0.20))
+	regen.position = Vector2(x, yc)
+	regen.size.x = BTN + 20.0
+	bar.add_child(regen)
+	regen.pressed.connect(func(): regenerate_requested.emit())
+
+	_refresh_speed_highlights()
+	_refresh_tab_highlights()
+
+func _build_terrain_content() -> void:
+	_terrain_content = Control.new()
+	_terrain_content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tool_panel.add_child(_terrain_content)
 
 	var x := float(PAD)
-	var yc := float((TOOLBAR_H - BTN) / 2)
+	var yc := (PANEL_H - BTN) / 2.0
+	_content_label(_terrain_content, "PINTAR:", x, yc)
+	x += 62.0
 
-	# Biomes
-	_section_label(bg, "BIOMA", x, 3.0)
 	for i in BIOMES.size():
 		var btn := _make_biome_btn(i)
 		btn.position = Vector2(x, yc)
-		bg.add_child(btn)
+		_terrain_content.add_child(btn)
 		_biome_btns.append(btn)
 		var ci: int = i
 		btn.pressed.connect(func(): _on_biome(ci))
 		x += BTN + GAP
-	x += PAD
-	_divider(bg, x, yc)
-	x += GAP + 4.0
 
-	# Tools
-	_section_label(bg, "HERR.", x, 3.0)
-	var tool_defs := [["paint", "P", Color(0.95, 0.95, 0.55)], ["spawn", "H", Color(0.95, 0.70, 0.50)]]
-	for td: Array in tool_defs:
-		var btn := _make_icon_btn(td[1] as String, td[2] as Color)
+	_refresh_biome_highlights()
+
+func _build_entity_content() -> void:
+	_entity_content = Control.new()
+	_entity_content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tool_panel.add_child(_entity_content)
+
+	var x := float(PAD)
+	var yc := (PANEL_H - BTN) / 2.0
+	_content_label(_entity_content, "SPAWN:", x, yc)
+	x += 62.0
+
+	for i in _species_data.size():
+		var sp: Dictionary = _species_data[i]
+		var btn := _make_species_btn(sp["name"] as String, sp["color"] as Color)
 		btn.position = Vector2(x, yc)
-		bg.add_child(btn)
-		_tool_btns[td[0]] = btn
-		var tk: String = td[0]
-		btn.pressed.connect(func(): _on_tool(tk))
-		x += BTN + GAP
-	x += PAD
-	_divider(bg, x, yc)
-	x += GAP + 4.0
+		_entity_content.add_child(btn)
+		_species_btns.append(btn)
+		var si: int = i
+		btn.pressed.connect(func(): _on_species(si))
+		x += 86.0 + GAP
 
-	# Time
-	_section_label(bg, "TIEMPO", x, 3.0)
-	var speed_defs := [[0, "||", Color(0.95, 0.40, 0.40)], [1, "1x", Color(0.55, 0.95, 0.55)],
-		[2, "2x", Color(0.55, 0.95, 0.55)], [5, "5x", Color(0.95, 0.95, 0.40)],
-		[10, "10x", Color(0.95, 0.60, 0.20)]]
-	for sd: Array in speed_defs:
-		var btn := _make_icon_btn(sd[1] as String, sd[2] as Color)
-		btn.position = Vector2(x, yc)
-		bg.add_child(btn)
-		_speed_btns[sd[0]] = btn
-		var sv: int = sd[0]
-		btn.pressed.connect(func(): _on_speed(sv))
-		x += BTN + GAP
-	x += PAD
-	_divider(bg, x, yc)
-	x += GAP + 4.0
+	_refresh_species_highlights()
 
-	# Map
-	_section_label(bg, "MAPA", x, 3.0)
-	var map_defs := [["random", "R", Color(0.70, 0.70, 0.95)],
-		["continents", "C", Color(0.45, 0.85, 0.55)],
-		["world", "W", Color(0.40, 0.75, 0.95)]]
-	for md: Array in map_defs:
+func _build_world_content() -> void:
+	_world_content = Control.new()
+	_world_content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tool_panel.add_child(_world_content)
+
+	var x := float(PAD)
+	var yc := (PANEL_H - BTN) / 2.0
+	_content_label(_world_content, "MAPA:", x, yc)
+	x += 62.0
+
+	var maps: Array[Array] = [
+		[0, "Aleatorio",   Color(0.70, 0.70, 0.95)],
+		[1, "Tipo Tierra", Color(0.45, 0.85, 0.55)],
+		[2, "Continente",  Color(0.40, 0.75, 0.95)],
+	]
+	for md in maps:
 		var btn := _make_icon_btn(md[1] as String, md[2] as Color)
 		btn.position = Vector2(x, yc)
-		bg.add_child(btn)
-		_map_btns[md[0]] = btn
-		var mk: String = md[0]
-		btn.pressed.connect(func(): _on_map(mk))
-		x += BTN + GAP
-	x += PAD
-	_divider(bg, x, yc)
-	x += GAP + 4.0
+		btn.size.x = 96.0
+		_world_content.add_child(btn)
+		var mi: int = md[0]
+		_map_btns[mi] = btn
+		btn.pressed.connect(func(): _on_map(mi))
+		x += 96.0 + GAP
 
-	# Regenerate
-	var regen := _make_icon_btn("GEN", Color(1.0, 0.60, 0.20))
-	regen.position = Vector2(x, yc)
-	regen.size.x = BTN + 14.0
-	bg.add_child(regen)
-	regen.pressed.connect(func(): regenerate_requested.emit())
+	_refresh_map_highlights()
 
-	_refresh_highlights()
+func _show_tab(tab: String) -> void:
+	_terrain_content.visible = tab == "terrain"
+	_entity_content.visible = tab == "entities"
+	_world_content.visible = tab == "world"
+	_tool_panel.visible = true
+
+func _on_tab(tab: String) -> void:
+	if active_tab == tab:
+		_tool_panel.visible = not _tool_panel.visible
+		return
+	active_tab = tab
+	_show_tab(tab)
+	_refresh_tab_highlights()
+
+func _on_biome(idx: int) -> void:
+	selected_biome = idx
+	_refresh_biome_highlights()
+	biome_selected.emit(idx)
+
+func _on_species(idx: int) -> void:
+	selected_species = idx
+	_refresh_species_highlights()
+	species_selected.emit(idx)
+
+func _on_speed(idx: int) -> void:
+	current_speed_idx = idx
+	_refresh_speed_highlights()
+	time_speed_changed.emit(idx)
+
+func _on_map(idx: int) -> void:
+	current_map_idx = idx
+	_refresh_map_highlights()
+	map_type_changed.emit(idx)
+
+func _refresh_tab_highlights() -> void:
+	for key in _tab_btns:
+		if key == active_tab:
+			_tab_btns[key].add_theme_stylebox_override("normal", _style(Color(0.20, 0.20, 0.10), Color.YELLOW, 2))
+		else:
+			_tab_btns[key].add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+
+func _refresh_biome_highlights() -> void:
+	for i in _biome_btns.size():
+		var c := BIOME_COLORS[i]
+		if i == selected_biome:
+			_biome_btns[i].add_theme_stylebox_override("normal", _style(c, Color.YELLOW, 3))
+		else:
+			_biome_btns[i].add_theme_stylebox_override("normal", _style(c.darkened(0.4), c, 2))
+
+func _refresh_species_highlights() -> void:
+	for i in _species_btns.size():
+		if i == selected_species:
+			_species_btns[i].add_theme_stylebox_override("normal", _style(Color(0.22, 0.22, 0.10), Color.YELLOW, 3))
+		else:
+			_species_btns[i].add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+
+func _refresh_speed_highlights() -> void:
+	for key in _speed_btns:
+		if key == current_speed_idx:
+			_speed_btns[key].add_theme_stylebox_override("normal", _style(Color(0.20, 0.20, 0.10), Color.YELLOW, 3))
+		else:
+			_speed_btns[key].add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+
+func _refresh_map_highlights() -> void:
+	for key in _map_btns:
+		if key == current_map_idx:
+			_map_btns[key].add_theme_stylebox_override("normal", _style(Color(0.20, 0.20, 0.10), Color.YELLOW, 3))
+		else:
+			_map_btns[key].add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
 
 func _make_biome_btn(idx: int) -> Button:
 	var color := BIOME_COLORS[idx]
@@ -140,8 +270,33 @@ func _make_biome_btn(idx: int) -> Button:
 	btn.add_theme_color_override("font_color_hover", Color.WHITE)
 	btn.add_theme_stylebox_override("normal", _style(color.darkened(0.4), color, 2))
 	btn.add_theme_stylebox_override("hover", _style(color.darkened(0.2), Color.WHITE, 3))
-	btn.add_theme_stylebox_override("pressed", _style(color, Color.YELLOW, 3))
 	btn.add_theme_stylebox_override("focus", _style(color.darkened(0.4), color, 2))
+	return btn
+
+func _make_species_btn(sp_name: String, color: Color) -> Button:
+	var btn := Button.new()
+	btn.size = Vector2(86.0, BTN)
+	btn.text = sp_name
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", 13)
+	btn.add_theme_color_override("font_color", color.lightened(0.3))
+	btn.add_theme_color_override("font_color_hover", Color.WHITE)
+	btn.add_theme_stylebox_override("normal", _style(color.darkened(0.5), color, 2))
+	btn.add_theme_stylebox_override("hover", _style(color.darkened(0.3), Color.WHITE, 3))
+	btn.add_theme_stylebox_override("focus", _style(color.darkened(0.5), color, 2))
+	return btn
+
+func _make_tab_btn(label: String, color: Color) -> Button:
+	var btn := Button.new()
+	btn.size = Vector2(88.0, BTN)
+	btn.text = label
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", 14)
+	btn.add_theme_color_override("font_color", color)
+	btn.add_theme_color_override("font_color_hover", Color.WHITE)
+	btn.add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+	btn.add_theme_stylebox_override("hover", _style(Color(0.18, 0.18, 0.18), color, 2))
+	btn.add_theme_stylebox_override("focus", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
 	return btn
 
 func _make_icon_btn(icon: String, color: Color) -> Button:
@@ -149,81 +304,42 @@ func _make_icon_btn(icon: String, color: Color) -> Button:
 	btn.size = Vector2(BTN, BTN)
 	btn.text = icon
 	btn.focus_mode = Control.FOCUS_NONE
-	btn.add_theme_font_size_override("font_size", 17)
+	btn.add_theme_font_size_override("font_size", 14)
 	btn.add_theme_color_override("font_color", color)
 	btn.add_theme_color_override("font_color_hover", Color.WHITE)
-	btn.add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.30, 0.30, 0.30), 2))
-	btn.add_theme_stylebox_override("hover", _style(Color(0.20, 0.20, 0.20), color, 2))
-	btn.add_theme_stylebox_override("pressed", _style(color.darkened(0.5), color, 3))
-	btn.add_theme_stylebox_override("focus", _style(Color(0.12, 0.12, 0.12), Color(0.30, 0.30, 0.30), 2))
+	btn.add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
+	btn.add_theme_stylebox_override("hover", _style(Color(0.18, 0.18, 0.18), color, 2))
+	btn.add_theme_stylebox_override("focus", _style(Color(0.12, 0.12, 0.12), Color(0.28, 0.28, 0.28), 2))
 	return btn
+
+func _content_label(parent: Control, text: String, x: float, yc: float) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.position = Vector2(x, yc + (BTN - 16.0) / 2.0)
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", Color(0.50, 0.50, 0.50))
+	parent.add_child(lbl)
 
 func _style(bg: Color, border: Color, bw: int) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
-	s.border_width_left = bw
-	s.border_width_right = bw
-	s.border_width_top = bw
-	s.border_width_bottom = bw
+	s.border_width_left = bw; s.border_width_right = bw
+	s.border_width_top = bw; s.border_width_bottom = bw
 	s.border_color = border
-	s.corner_radius_top_left = 3
-	s.corner_radius_top_right = 3
-	s.corner_radius_bottom_left = 3
-	s.corner_radius_bottom_right = 3
+	s.corner_radius_top_left = 3; s.corner_radius_top_right = 3
+	s.corner_radius_bottom_left = 3; s.corner_radius_bottom_right = 3
 	return s
 
-func _section_label(parent: Control, text: String, x: float, y: float) -> void:
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.position = Vector2(x, y)
-	lbl.add_theme_font_size_override("font_size", 9)
-	lbl.add_theme_color_override("font_color", Color(0.45, 0.45, 0.45))
-	parent.add_child(lbl)
+func _style_panel(p: Panel, color: Color) -> void:
+	var s := StyleBoxFlat.new()
+	s.bg_color = color
+	s.border_width_top = 2
+	s.border_color = Color(0.22, 0.22, 0.22)
+	p.add_theme_stylebox_override("panel", s)
 
 func _divider(parent: Control, x: float, y: float) -> void:
 	var d := ColorRect.new()
 	d.position = Vector2(x, y)
 	d.size = Vector2(2.0, float(BTN))
-	d.color = Color(0.25, 0.25, 0.25)
+	d.color = Color(0.22, 0.22, 0.22)
 	parent.add_child(d)
-
-func _on_biome(idx: int) -> void:
-	selected_biome = idx
-	_refresh_highlights()
-	biome_selected.emit(idx)
-
-func _on_tool(tool: String) -> void:
-	current_tool = tool
-	_refresh_highlights()
-	tool_changed.emit(tool)
-
-func _on_speed(speed: int) -> void:
-	current_speed = speed
-	_refresh_highlights()
-	time_speed_changed.emit(speed)
-
-func _on_map(map: String) -> void:
-	current_map = map
-	_refresh_highlights()
-	map_type_changed.emit(map)
-
-func _refresh_highlights() -> void:
-	for i in _biome_btns.size():
-		var sel := i == selected_biome
-		var c := BIOME_COLORS[i]
-		if sel:
-			_biome_btns[i].add_theme_stylebox_override("normal", _style(c, Color.YELLOW, 3))
-		else:
-			_biome_btns[i].add_theme_stylebox_override("normal", _style(c.darkened(0.4), c, 2))
-	for key in _tool_btns:
-		_highlight_icon_btn(_tool_btns[key], key == current_tool)
-	for key in _speed_btns:
-		_highlight_icon_btn(_speed_btns[key], key == current_speed)
-	for key in _map_btns:
-		_highlight_icon_btn(_map_btns[key], key == current_map)
-
-func _highlight_icon_btn(btn: Button, selected: bool) -> void:
-	if selected:
-		btn.add_theme_stylebox_override("normal", _style(Color(0.22, 0.22, 0.10), Color.YELLOW, 3))
-	else:
-		btn.add_theme_stylebox_override("normal", _style(Color(0.12, 0.12, 0.12), Color(0.30, 0.30, 0.30), 2))
