@@ -109,8 +109,10 @@ func _spawn_initial_humans() -> void:
 		_spawn_human_at(walkable[i], species)
 
 func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
+	var preferred: Array[String] = []
+	preferred.assign(species["preferred"])
 	var human := Human.new()
-	human.setup(cell, TILE_SIZE, species["name"] as String, species["color"] as Color, species["preferred"] as Array[String])
+	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred)
 	add_child(human)
 	humans.append(human)
 
