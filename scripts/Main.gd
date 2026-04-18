@@ -158,7 +158,7 @@ func _age_and_reproduce() -> void:
 		humans.append(child)
 
 func _find_adjacent_empty(pos: Vector2i, occupied: Dictionary) -> Vector2i:
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	for dir in dirs:
 		var cell := pos + dir
 		if world_grid.is_walkable(cell) and not occupied.has(_cell_key(cell)):
