@@ -3,76 +3,77 @@ class_name Human
 
 var grid_position: Vector2i = Vector2i.ZERO
 var tile_size: int = 16
+var species_name: String = "Humanos"
+var species_color: Color = Color(1.0, 0.92, 0.80)
+var preferred_biomes: Array[String] = []
+var evolution_score := 0.0
+var age_ticks := 0
 
-var age := 0
-var max_age := 200
-var generation := 0
-var hue := 0.0
-var reproduce_cooldown := 0
-var reproduce_every := 80
-
-func setup(p_pos: Vector2i, p_tile_size: int) -> void:
-	grid_position = p_pos
+func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String]) -> void:
+	grid_position = p_grid_position
 	tile_size = p_tile_size
-	max_age = 150 + randi_range(0, 100)
-	reproduce_every = 60 + randi_range(0, 40)
-	hue = randf()
-	_sync_position()
+	species_name = p_species_name
+	species_color = p_species_color
+	preferred_biomes = p_preferred_biomes.duplicate()
+	evolution_score = 0.0
+	age_ticks = 0
+	_update_world_position()
 	queue_redraw()
-
-func setup_child(p_pos: Vector2i, p_tile_size: int, parent: Human, rng: RandomNumberGenerator) -> void:
-	grid_position = p_pos
-	tile_size = p_tile_size
-	generation = parent.generation + 1
-	max_age = clampi(parent.max_age + rng.randi_range(-20, 20), 50, 400)
-	reproduce_every = clampi(parent.reproduce_every + rng.randi_range(-10, 10), 20, 200)
-	hue = fmod(parent.hue + rng.randf_range(-0.04, 0.04) + 1.0, 1.0)
-	_sync_position()
-	queue_redraw()
-
-func tick_age() -> bool:
-	age += 1
-	if reproduce_cooldown > 0:
-		reproduce_cooldown -= 1
-	return age < max_age
-
-func can_reproduce() -> bool:
-	return reproduce_cooldown <= 0
-
-func on_reproduced() -> void:
-	reproduce_cooldown = reproduce_every
 
 func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dictionary) -> Vector2i:
-	var dirs: Array[Vector2i] = [
-		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i.ZERO,
+	var directions: Array[Vector2i] = [
+		Vector2i(1, 0),
+		Vector2i(-1, 0),
+		Vector2i(0, 1),
+		Vector2i(0, -1),
+		Vector2i.ZERO,
 	]
-	for i in range(dirs.size() - 1, 0, -1):
+	for i in range(directions.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i)
-		var tmp := dirs[i]; dirs[i] = dirs[j]; dirs[j] = tmp
+		var temp: Vector2i = directions[i]
+		directions[i] = directions[j]
+		directions[j] = temp
 
-	for dir in dirs:
+	var best_cells: Array[Vector2i] = []
+	var best_score := -999
+	for dir in directions:
 		var next := grid_position + dir
 		if not grid.is_walkable(next):
 			continue
-		if occupied.has("%s:%s" % [next.x, next.y]):
+		var key := "%s:%s" % [next.x, next.y]
+		if occupied.has(key):
 			continue
-		return next
-	return grid_position
 
-func set_grid_position(pos: Vector2i) -> void:
-	grid_position = pos
-	_sync_position()
+		var score := 1
+		var biome := grid.get_biome(next)
+		if preferred_biomes.has(biome):
+			score += 2
+		if score > best_score:
+			best_score = score
+			best_cells.clear()
+			best_cells.append(next)
+		elif score == best_score:
+			best_cells.append(next)
 
-func _sync_position() -> void:
+	if best_cells.is_empty():
+		return grid_position
+	return best_cells[rng.randi_range(0, best_cells.size() - 1)]
+
+func update_evolution(current_biome: String) -> void:
+	age_ticks += 1
+	if preferred_biomes.has(current_biome):
+		evolution_score += 0.03
+	else:
+		evolution_score -= 0.01
+	evolution_score = clamp(evolution_score, -50.0, 200.0)
+
+func set_grid_position(next: Vector2i) -> void:
+	grid_position = next
+	_update_world_position()
+
+func _update_world_position() -> void:
 	position = Vector2((grid_position.x + 0.5) * tile_size, (grid_position.y + 0.5) * tile_size)
 
 func _draw() -> void:
-	var life_ratio := 1.0 - float(age) / float(max_age)
-	var gen_t := minf(float(generation) / 20.0, 1.0)
-	var sat := lerpf(0.25, 0.65, gen_t)
-	var val := lerpf(0.55, 1.0, life_ratio)
-	var radius := tile_size * lerpf(0.24, 0.30, gen_t)
-	var body := Color.from_hsv(hue, sat, val)
-	var inner := Color.from_hsv(hue, minf(sat + 0.3, 1.0), val * 0.35)
-	draw_circle(Vector2.ZERO, radius, body)
-	draw_circle(Vector2.ZERO, radius * 0.5, inner)
+	draw_circle(Vector2.ZERO, tile_size * 0.28, species_color)
+	draw_circle(Vector2.ZERO, tile_size * 0.14, Color(0.20, 0.15, 0.12))

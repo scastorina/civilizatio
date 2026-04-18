@@ -1,30 +1,28 @@
 # Civilizatio
 
-Prototipo simple en **Godot 4** para iterar una simulación de mapa + humanos.
+Prototipo simple en **Godot 4** para iterar una simulación de mapa + especies.
 
 ## Estado actual
 
-- Generación procedural de biomas por tiles.
-- Humanos visibles (círculos) sobre el mapa.
+- Generación de biomas por tiles con presets de mapa.
+- Varias especies visibles con color propio.
 - Spawn inicial en tiles caminables (no agua / no montaña).
-- Movimiento aleatorio simple por ticks.
-- Sin superposición entre humanos durante el movimiento.
+- Movimiento por ticks sin superposición.
+- Evolución básica por especie según biomas preferidos.
+- Adelantador de tiempo configurable (x1/x2/x5/x10).
 - Editor de terreno en runtime para pintar biomas.
-- Lógica separada en:
-  - `Main.gd` (orquestación, ticks, input y dibujo del mundo)
-  - `WorldGrid.gd` (datos/reglas del mapa)
-  - `Human.gd` (entidad y decisión de movimiento)
+- Menú de configuración para mapa, especies y velocidad.
 
 ## Estructura
 
 - `scenes/Main.tscn`: escena principal del proyecto.
-- `scripts/Main.gd`: loop principal, editor, spawn y ticks.
-- `scripts/WorldGrid.gd`: generación de biomas y validación de tiles caminables.
-- `scripts/Human.gd`: representación y movimiento de un humano.
+- `scripts/Main.gd`: loop principal, menú, editor, spawn, ticks y resumen de evolución.
+- `scripts/WorldGrid.gd`: generación de biomas, presets y validación de tiles caminables.
+- `scripts/Human.gd`: entidad de especie, movimiento y evolución individual.
 
 ## Controles
 
-- `Enter`: regenera el mundo y vuelve a spawnear humanos.
+- `Enter`: regenera el mundo con la configuración seleccionada.
 - `E`: activa/desactiva el editor de terreno.
 - `1..5`: selecciona bioma para pintar.
   - `1`: water
@@ -34,6 +32,18 @@ Prototipo simple en **Godot 4** para iterar una simulación de mapa + humanos.
   - `5`: mountain
 - Click izquierdo: pinta el tile seleccionado cuando el editor está activo.
 
+## Menú de configuración
+
+En el panel lateral podés ajustar:
+
+- **Mapa**:
+  - Aleatorio
+  - Tipo Tierra (bandas latitudinales simples)
+  - Continente (masa principal rodeada de agua)
+- **Cantidad de especies activas** (1 a 4).
+- **Adelantador de tiempo** (x1/x2/x5/x10).
+- **Aplicar y regenerar** para refrescar el mundo con esa configuración.
+
 ## Ejecutar en Godot 4
 
 1. Abrir Godot 4.
@@ -42,6 +52,6 @@ Prototipo simple en **Godot 4** para iterar una simulación de mapa + humanos.
 
 ## Notas
 
-- El proyecto se mantiene deliberadamente simple para iterar rápido.
-- No hay pathfinding ni IA avanzada en esta etapa.
-- Si intentás pintar `water` o `mountain` sobre un humano, se ignora para no dejarlo atrapado en tile bloqueado.
+- Es una base simple para iterar rápido; la evolución actual es intencionalmente básica.
+- El preset “Tipo Tierra” es aproximado (no usa datos reales GIS).
+- Próximo paso sugerido: cargar heightmaps reales de Tierra/continentes para mapas más fieles.
