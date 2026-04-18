@@ -20,6 +20,7 @@ var rng := RandomNumberGenerator.new()
 var world_grid := WorldGrid.new(WORLD_WIDTH, WORLD_HEIGHT)
 var humans: Array[Human] = []
 var move_tick_accumulator := 0.0
+var _species_colors: Dictionary = {}
 
 var current_speed_idx := 1
 var current_map_idx := 0
@@ -30,6 +31,8 @@ var ui: GameUI
 
 func _ready() -> void:
 	rng.randomize()
+	for sp: Dictionary in SPECIES_LIBRARY:
+		_species_colors[sp["name"] as String] = sp["color"] as Color
 	ui = GameUI.new()
 	add_child(ui)
 	ui.setup_species(SPECIES_LIBRARY)
@@ -113,6 +116,7 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	preferred.assign(species["preferred"])
 	var human := Human.new()
 	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred)
+	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
 	humans.append(human)
 
@@ -126,6 +130,7 @@ func _move_humans() -> void:
 		occupied.erase(_cell_key(human.grid_position))
 		var next := human.choose_next_cell(world_grid, rng, occupied)
 		human.set_grid_position(next)
+		world_grid.set_owner(next, human.species_name)
 		occupied[_cell_key(next)] = true
 
 func _update_evolution() -> void:
@@ -135,10 +140,13 @@ func _update_evolution() -> void:
 func _draw() -> void:
 	for y in range(world_grid.height):
 		for x in range(world_grid.width):
-			draw_rect(
-				Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
-				_biome_color(world_grid.get_biome(Vector2i(x, y)))
-			)
+			var cell := Vector2i(x, y)
+			var c := _biome_color(world_grid.get_biome(cell))
+			var owner := world_grid.get_owner(cell)
+			if owner != "":
+				var sc: Color = _species_colors.get(owner, Color.WHITE)
+				c = c.lerp(sc, 0.30)
+			draw_rect(Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE), c)
 
 	# Species stats overlay (top-left)
 	var stats := _species_stats()

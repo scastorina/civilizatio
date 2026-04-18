@@ -6,6 +6,7 @@ var height: int
 
 var _rng := RandomNumberGenerator.new()
 var _tiles: Array = []
+var _owners: Array = []
 
 func _init(p_width: int, p_height: int) -> void:
 	width = p_width
@@ -13,6 +14,7 @@ func _init(p_width: int, p_height: int) -> void:
 	_rng.randomize()
 
 func generate(preset: String = "random") -> void:
+	_clear_owners()
 	match preset:
 		"earth_like":
 			_generate_earth_like()
@@ -20,6 +22,24 @@ func generate(preset: String = "random") -> void:
 			_generate_continent()
 		_:
 			_generate_random()
+
+func _clear_owners() -> void:
+	_owners.clear()
+	for _y in range(height):
+		var row: Array = []
+		for _x in range(width):
+			row.append("")
+		_owners.append(row)
+
+func get_owner(cell: Vector2i) -> String:
+	if not is_in_bounds(cell):
+		return ""
+	return _owners[cell.y][cell.x]
+
+func set_owner(cell: Vector2i, species: String) -> void:
+	if not is_in_bounds(cell):
+		return
+	_owners[cell.y][cell.x] = species
 
 func _generate_random() -> void:
 	_tiles.clear()
