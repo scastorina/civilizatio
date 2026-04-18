@@ -17,18 +17,82 @@ func generate() -> void:
 	for y in range(height):
 		var row: Array = []
 		for x in range(width):
-			var value := _rng.randf()
-			if value < 0.18:
+			var v := _rng.randf()
+			if v < 0.18:
 				row.append("water")
-			elif value < 0.24:
+			elif v < 0.24:
 				row.append("sand")
-			elif value < 0.72:
+			elif v < 0.72:
 				row.append("grass")
-			elif value < 0.88:
+			elif v < 0.88:
 				row.append("forest")
 			else:
 				row.append("mountain")
 		_tiles.append(row)
+
+func generate_continents() -> void:
+	_tiles.clear()
+	var noise := FastNoiseLite.new()
+	noise.seed = _rng.randi()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = 0.04
+	noise.fractal_octaves = 4
+	noise.fractal_gain = 0.5
+	noise.fractal_lacunarity = 2.0
+
+	for y in range(height):
+		var row: Array = []
+		for x in range(width):
+			var n := (noise.get_noise_2d(float(x), float(y)) + 1.0) * 0.5
+			row.append(_elevation_to_biome(n))
+		_tiles.append(row)
+
+func generate_world() -> void:
+	_tiles.clear()
+	var elev := FastNoiseLite.new()
+	elev.seed = _rng.randi()
+	elev.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	elev.frequency = 0.025
+	elev.fractal_octaves = 5
+	elev.fractal_gain = 0.5
+	elev.fractal_lacunarity = 2.0
+
+	var moisture := FastNoiseLite.new()
+	moisture.seed = _rng.randi()
+	moisture.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	moisture.frequency = 0.06
+	moisture.fractal_octaves = 3
+
+	for y in range(height):
+		var row: Array = []
+		for x in range(width):
+			var e := (elev.get_noise_2d(float(x), float(y)) + 1.0) * 0.5
+			var m := (moisture.get_noise_2d(float(x), float(y)) + 1.0) * 0.5
+			row.append(_biome_from_elev_moisture(e, m))
+		_tiles.append(row)
+
+func _elevation_to_biome(n: float) -> String:
+	if n < 0.35:
+		return "water"
+	elif n < 0.43:
+		return "sand"
+	elif n < 0.67:
+		return "grass"
+	elif n < 0.82:
+		return "forest"
+	else:
+		return "mountain"
+
+func _biome_from_elev_moisture(e: float, m: float) -> String:
+	if e < 0.33:
+		return "water"
+	if e < 0.40:
+		return "sand"
+	if e > 0.78:
+		return "mountain"
+	if m > 0.55:
+		return "forest"
+	return "grass"
 
 func get_biome(cell: Vector2i) -> String:
 	if not is_in_bounds(cell):
@@ -46,8 +110,8 @@ func is_in_bounds(cell: Vector2i) -> bool:
 func is_walkable(cell: Vector2i) -> bool:
 	if not is_in_bounds(cell):
 		return false
-	var biome: String = get_biome(cell)
-	return biome != "water" and biome != "mountain"
+	var b := get_biome(cell)
+	return b != "water" and b != "mountain"
 
 func get_all_walkable_cells() -> Array[Vector2i]:
 	var walkable: Array[Vector2i] = []
