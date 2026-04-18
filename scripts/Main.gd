@@ -415,13 +415,14 @@ func _log_event(text: String, species: String, detail: String = "") -> void:
 func _fortification_name(level: int) -> String:
 	return FORTIFICATION_NAMES[clampi(level, 0, FORTIFICATION_NAMES.size() - 1)]
 
-func _offer_advice(topic: String, species: String, prompt: String, expires_in: int = 18) -> void:
+func _offer_advice(topic: String, species: String, prompt: String, options: Array[String], expires_in: int = 18) -> void:
 	if not _active_advice.is_empty():
 		return
 	_active_advice = {
 		"topic": topic,
 		"species": species,
 		"prompt": prompt,
+		"options": options,
 		"expires": world_year + expires_in,
 	}
 	_next_advice_year = world_year + expires_in + 24
@@ -439,12 +440,12 @@ func _update_chronicle_advice() -> void:
 	for sp: String in _species_pressures.keys():
 		var state := _species_pressures.get(sp, {}) as Dictionary
 		if (state.get("starving", false) as bool) and (state.get("capacity", 0) as int) > 0:
-			_offer_advice("food", sp, "Falta comida en %s. Responde corto: grano, racion o migrar." % sp)
+			_offer_advice("food", sp, "Falta comida en %s. Elige una respuesta." % sp, ["Grano", "Racion", "Migrar"])
 			return
 	for key: String in _war_pairs.keys():
 		var parts := key.split("|")
 		if parts.size() == 2:
-			_offer_advice("war", parts[0], "La guerra crece entre %s y %s. Responde: muro, paz o saqueo." % [parts[0], parts[1]])
+			_offer_advice("war", parts[0], "La guerra crece entre %s y %s. Elige la postura del consejo." % [parts[0], parts[1]], ["Muro", "Paz", "Saqueo"])
 			return
 	for species: String in _species_fleets.keys():
 		var fleet := _fleet_state(species)
@@ -455,7 +456,7 @@ func _update_chronicle_advice() -> void:
 				if route.get("mode", "land") == "sea" and route.get("species", "") == species:
 					sea_routes += 1
 			if sea_routes == 0:
-				_offer_advice("port", species, "Los puertos de %s quedaron aislados. Responde: puerto, costa o flota." % species)
+				_offer_advice("port", species, "Los puertos de %s quedaron aislados. Elige la prioridad." % species, ["Puerto", "Costa", "Flota"])
 				return
 
 func _on_chronicle_reply_submitted(text: String) -> void:
@@ -2026,8 +2027,11 @@ func _refresh_hud() -> void:
 			hero_lines.append("★ %s (%s) — %d batallas" % [h.hero_name, h.species_name, h.battles_won])
 			hero_colors.append((_species_colors.get(h.species_name, Color.WHITE) as Color))
 	var advisory_prompt := _active_advice.get("prompt", "") as String if not _active_advice.is_empty() else ""
+	var advisory_options: Array[String] = []
+	if not _active_advice.is_empty():
+		advisory_options.assign(_active_advice.get("options", []) as Array)
 	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year, advisory_prompt, not _active_advice.is_empty())
-	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty())
+	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty(), advisory_options)
 
 func _has_human_in_cell(cell: Vector2i) -> bool:
 	for human in humans:

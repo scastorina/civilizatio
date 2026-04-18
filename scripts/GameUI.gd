@@ -56,7 +56,7 @@ var _world_content: Control
 var _power_content: Control
 var _species_data: Array[Dictionary] = []
 var _chronicle_prompt_label: Label
-var _chronicle_input: LineEdit
+var _chronicle_reply_buttons: Array[Button] = []
 
 func _ready() -> void:
 	layer = 10
@@ -143,15 +143,15 @@ func _build_bar(bar: Panel) -> void:
 	_chronicle_prompt_label.add_theme_color_override("font_color", Color(0.85, 0.78, 0.46))
 	bar.add_child(_chronicle_prompt_label)
 
-	_chronicle_input = LineEdit.new()
-	_chronicle_input.position = Vector2(x + 92.0, yc + 20.0)
-	_chronicle_input.size = Vector2(260.0, 24.0)
-	_chronicle_input.placeholder_text = "Responde aqui si la cronica pide consejo"
-	_chronicle_input.max_length = 32
-	_chronicle_input.editable = false
-	_chronicle_input.add_theme_font_size_override("font_size", 12)
-	_chronicle_input.text_submitted.connect(_on_chronicle_reply_submitted)
-	bar.add_child(_chronicle_input)
+	for i in range(3):
+		var reply_btn := _make_icon_btn("...", Color(0.82, 0.68, 0.28))
+		reply_btn.position = Vector2(x + 92.0 + i * 88.0, yc + 18.0)
+		reply_btn.size = Vector2(84.0, 26.0)
+		reply_btn.visible = false
+		var option_idx := i
+		reply_btn.pressed.connect(func(): _on_chronicle_reply_pressed(option_idx))
+		bar.add_child(reply_btn)
+		_chronicle_reply_buttons.append(reply_btn)
 
 	_refresh_speed_highlights()
 	_refresh_tab_highlights()
@@ -287,25 +287,31 @@ func _on_power(idx: int) -> void:
 	_refresh_power_highlights()
 	power_selected.emit(idx)
 
-func _on_chronicle_reply_submitted(text: String) -> void:
-	var cleaned := text.strip_edges()
-	if cleaned == "":
+func _on_chronicle_reply_pressed(idx: int) -> void:
+	if idx < 0 or idx >= _chronicle_reply_buttons.size():
 		return
-	chronicle_reply_submitted.emit(cleaned)
-	_chronicle_input.clear()
+	var label := _chronicle_reply_buttons[idx].text.strip_edges()
+	if label == "":
+		return
+	chronicle_reply_submitted.emit(label)
 
-func set_chronicle_prompt(text: String, waiting: bool) -> void:
-	if _chronicle_prompt_label == null or _chronicle_input == null:
+func set_chronicle_prompt(text: String, waiting: bool, options: Array[String] = []) -> void:
+	if _chronicle_prompt_label == null:
 		return
 	_chronicle_prompt_label.text = text if waiting else "Consejo:"
-	_chronicle_input.editable = waiting
-	_chronicle_input.placeholder_text = "Responde aqui" if waiting else "La simulacion sigue aunque no respondas"
-	if not waiting:
-		_chronicle_input.release_focus()
-		_chronicle_input.clear()
+	for i in _chronicle_reply_buttons.size():
+		var btn := _chronicle_reply_buttons[i]
+		if waiting and i < options.size():
+			btn.text = options[i]
+			btn.visible = true
+			btn.disabled = false
+		else:
+			btn.text = ""
+			btn.visible = false
+			btn.disabled = true
 
 func is_reply_input_focused() -> bool:
-	return _chronicle_input != null and _chronicle_input.has_focus()
+	return false
 
 func _refresh_tab_highlights() -> void:
 	for key in _tab_btns:
