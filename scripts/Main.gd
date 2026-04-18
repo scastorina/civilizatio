@@ -263,15 +263,9 @@ func _cell_key(cell: Vector2i) -> String:
 
 func _biome_color(biome: String) -> Color:
 	match biome:
-		"water":
-			return Color(0.20, 0.45, 0.85)
-		"sand":
-			return Color(0.85, 0.80, 0.50)
-		"grass":
-			return Color(0.30, 0.70, 0.30)
-		"forest":
-			return Color(0.10, 0.45, 0.15)
-		"mountain":
-			return Color(0.45, 0.45, 0.45)
-		_:
-			return Color.WHITE
+		"water":    return Color(0.20, 0.45, 0.85)
+		"sand":     return Color(0.85, 0.80, 0.50)
+		"grass":    return Color(0.30, 0.70, 0.30)
+		"forest":   return Color(0.10, 0.45, 0.15)
+		"mountain": return Color(0.45, 0.45, 0.45)
+		_:          return Color.WHITE
