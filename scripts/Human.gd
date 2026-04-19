@@ -6,6 +6,7 @@ var tile_size: int = 16
 var species_name: String = "Humanos"
 var species_color: Color = Color(1.0, 0.92, 0.80)
 var preferred_biomes: Array[String] = []
+var avoided_biomes: Array[String] = []
 var evolution_score := 0.0
 var age_ticks := 0
 var combat_bonus := 1.0
@@ -18,12 +19,13 @@ var infected := false
 var on_fire := false
 var religion := ""
 
-func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0) -> void:
+func setup(p_grid_position: Vector2i, p_tile_size: int, p_species_name: String, p_species_color: Color, p_preferred_biomes: Array[String], p_combat: float = 1.0, p_defense: float = 1.0, p_evo_rate: float = 1.0, p_avoided_biomes: Array[String] = []) -> void:
 	grid_position = p_grid_position
 	tile_size = p_tile_size
 	species_name = p_species_name
 	species_color = p_species_color
 	preferred_biomes = p_preferred_biomes.duplicate()
+	avoided_biomes = p_avoided_biomes.duplicate()
 	combat_bonus = p_combat
 	defense_bonus = p_defense
 	evo_rate = p_evo_rate
@@ -62,7 +64,9 @@ func choose_next_cell(grid: WorldGrid, rng: RandomNumberGenerator, occupied: Dic
 		var score := 1
 		var biome := grid.get_biome(next)
 		if preferred_biomes.has(biome):
-			score += 2
+			score += 3   # stronger preference pull
+		elif avoided_biomes.has(biome):
+			score -= 3   # strong repulsion from hostile biomes
 		if dir != Vector2i.ZERO and grid.get_owner(next) == species_name:
 			score += 1
 			match grid.get_structure(next):

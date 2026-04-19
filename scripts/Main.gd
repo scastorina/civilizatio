@@ -10,10 +10,30 @@ const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain"]
 const MAP_PRESETS: Array[String] = ["random", "earth_like", "continent"]
 const TIME_SPEEDS: Array[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
 const SPECIES_LIBRARY: Array[Dictionary] = [
-	{"name": "Humanos", "color": Color(1.0, 0.92, 0.80), "preferred": ["grass", "forest"],   "combat": 1.0, "defense": 1.0, "evo_rate": 1.0},
-	{"name": "Elfos",   "color": Color(0.75, 0.95, 0.75), "preferred": ["forest", "grass"],   "combat": 0.6, "defense": 0.8, "evo_rate": 2.0},
-	{"name": "Enanos",  "color": Color(0.82, 0.75, 0.62), "preferred": ["mountain", "forest"],"combat": 0.9, "defense": 2.5, "evo_rate": 0.8},
-	{"name": "Orcos",   "color": Color(0.65, 0.80, 0.55), "preferred": ["sand", "grass"],     "combat": 2.0, "defense": 0.7, "evo_rate": 0.6},
+	{
+		"name": "Humanos", "color": Color(1.0, 0.92, 0.80),
+		"preferred": ["grass", "sand", "forest"],
+		"avoided":   ["mountain"],
+		"combat": 1.0, "defense": 1.0, "evo_rate": 1.0,
+	},
+	{
+		"name": "Elfos",   "color": Color(0.75, 0.95, 0.75),
+		"preferred": ["forest"],
+		"avoided":   ["sand", "mountain"],
+		"combat": 0.7, "defense": 1.1, "evo_rate": 1.5,
+	},
+	{
+		"name": "Enanos",  "color": Color(0.82, 0.75, 0.62),
+		"preferred": ["mountain", "forest"],
+		"avoided":   ["sand"],
+		"combat": 1.1, "defense": 2.0, "evo_rate": 0.9,
+	},
+	{
+		"name": "Orcos",   "color": Color(0.65, 0.80, 0.55),
+		"preferred": ["sand", "grass", "mountain"],
+		"avoided":   [],
+		"combat": 1.8, "defense": 0.8, "evo_rate": 0.7,
+	},
 ]
 
 var rng := RandomNumberGenerator.new()
@@ -64,8 +84,22 @@ var _battle_markers: Array[Dictionary] = []
 var _settlement_cluster_cache: Array = []
 var _territory_cluster_cache: Array = []
 
+# ── Species special systems ───────────────────────────────────────────────────
+# Dwarf Libro de Agravios: { "Enanos|Orcos" -> int grievance_points }
+var _species_grievances: Dictionary = {}
+# Forest tiles cleared per species key pair (used for elf deforestation detection)
+# { "Elfos|Humanos" -> int tiles_cleared_this_era }
+var _deforestation_log: Dictionary = {}
+# Tick counter since last war per species (for orc inactivity system)
+var _last_war_tick: Dictionary = {}
+# Orc pending tribute demand: { "Orcos|Humanos" -> { "amount": float, "expires": int } }
+var _tribute_pending: Dictionary = {}
+# Track which era (every 200 ticks) we last fired species events
+var _last_species_event_era: Dictionary = {}
+
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 const WorldEffectsScript = preload("res://scripts/WorldEffects.gd")
+const SpeciesDataScript = preload("res://scripts/SpeciesData.gd")
 
 var ui: GameUI
 var hud: Node2D
@@ -127,6 +161,8 @@ func _process(delta: float) -> void:
 		_update_trade_v2()
 		_update_religions()
 		_update_diplomacy()
+		_tick_species_events()
+		_resolve_expired_tributes()
 		_update_chronicle_advice()
 		_advance_battle_markers()
 		ticked = true
@@ -195,6 +231,10 @@ func _apply_tool_at(pos: Vector2) -> void:
 			var biome: String = GameUI.BIOMES[ui.selected_biome]
 			if (biome == "water" or biome == "mountain") and _has_human_in_cell(cell):
 				return
+			# Track deforestation for elf sensitivity
+			var old_biome := world_grid.get_biome(cell)
+			if old_biome == "forest" and biome != "forest":
+				_on_forest_tile_cleared(cell)
 			world_grid.set_biome(cell, biome)
 			_build_and_push_minimap()
 			queue_redraw()
@@ -228,8 +268,24 @@ func _regenerate_world() -> void:
 	_active_advice.clear()
 	_next_advice_year = 16
 	_sea_route_cache.clear()
+	_species_grievances.clear()
+	_deforestation_log.clear()
+	_last_war_tick.clear()
+	_tribute_pending.clear()
+	_last_species_event_era.clear()
 	world_year = 0
 	world_grid.generate(MAP_PRESETS[current_map_idx])
+	# Initialize base relations from SpeciesData matrix
+	for ii in SPECIES_LIBRARY.size():
+		for jj in range(ii + 1, SPECIES_LIBRARY.size()):
+			var sa := SPECIES_LIBRARY[ii]["name"] as String
+			var sb := SPECIES_LIBRARY[jj]["name"] as String
+			var base_rel := SpeciesDataScript.base_relation(sa, sb)
+			if base_rel != 0.0:
+				_set_relation(sa, sb, base_rel)
+	# Init last war tick so orcs don't trigger immediately
+	for sp: Dictionary in SPECIES_LIBRARY:
+		_last_war_tick[sp["name"] as String] = 0
 	_spawn_initial_humans()
 	_settlement_cluster_cache = _find_settlement_clusters()
 	_territory_cluster_cache  = _find_territory_clusters()
@@ -253,9 +309,12 @@ func _spawn_initial_humans() -> void:
 func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	var preferred: Array[String] = []
 	preferred.assign(species["preferred"])
+	var avoided: Array[String] = []
+	if species.has("avoided"):
+		avoided.assign(species["avoided"])
 	var human := Human.new()
 	human.setup(cell, TILE_SIZE, species["name"], species["color"], preferred,
-		species["combat"] as float, species["defense"] as float, species["evo_rate"] as float)
+		species["combat"] as float, species["defense"] as float, species["evo_rate"] as float, avoided)
 	human.religion = SPECIES_RELIGIONS.get(species["name"] as String, "") as String
 	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
@@ -270,6 +329,11 @@ func _move_humans() -> void:
 	for human in humans:
 		occupied.erase(_cell_key(human.grid_position))
 		var next := human.choose_next_cell(world_grid, rng, occupied)
+		# Track deforestation: non-elf moving into a forest tile triggers elf sensitivity
+		if human.species_name != "Elfos" and world_grid.get_biome(next) == "forest":
+			var prev_owner := world_grid.get_owner(next)
+			if prev_owner != human.species_name and prev_owner != "Elfos":
+				_on_forest_tile_cleared(next)
 		human.set_grid_position(next)
 		world_grid.set_owner(next, human.species_name)
 		occupied[_cell_key(next)] = true
@@ -294,7 +358,14 @@ func _resolve_combat() -> void:
 			var war_bonus := 1.5 if _war_pairs.has(pair_key) else 1.0
 			var army_atk := 1.0 + float(_species_armies.get(human.species_name, 0) as int) * 0.06
 			var army_def := 1.0 + float(_species_armies.get(target_owner, 0) as int) * 0.04
-			var chance := _conquest_chance(world_grid.get_structure(target), fort_level) * human.combat_bonus * tech_atk * war_bonus * army_atk / (def_bonus * tech_def * army_def)
+			# Habitat modifiers: attacker gets combat bonus on their biome, defender gets defense bonus
+			var atk_biome := world_grid.get_biome(human.grid_position)
+			var def_biome := world_grid.get_biome(target)
+			var atk_hmod := SpeciesDataScript.habitat_mod(human.species_name, atk_biome)
+			var def_hmod := SpeciesDataScript.habitat_mod(target_owner, def_biome)
+			var habitat_atk := atk_hmod["combat"] as float
+			var habitat_def := def_hmod["defense"] as float
+			var chance := _conquest_chance(world_grid.get_structure(target), fort_level) * human.combat_bonus * tech_atk * war_bonus * army_atk * habitat_atk / (def_bonus * tech_def * army_def * habitat_def)
 			var success := rng.randf() < chance
 			if _war_pairs.has(pair_key) or fort_level > 0 or success:
 				_record_battle_marker(human.grid_position, target, human.species_name, target_owner, success, fort_level)
@@ -302,6 +373,13 @@ func _resolve_combat() -> void:
 				world_grid.set_owner(target, human.species_name)
 				human.battles_won += 1
 				_set_relation(human.species_name, target_owner, _get_relation(human.species_name, target_owner) - 0.015)
+				# Dwarf Libro de Agravios: track attacks against dwarves
+				if target_owner == "Enanos":
+					var g_key := _diplomacy_key("Enanos", human.species_name)
+					_species_grievances[g_key] = (_species_grievances.get(g_key, 0) as int) + SpeciesDataScript.grievance_points("ataque_ciudad")
+				# Track last war tick per species for orc inactivity
+				_last_war_tick[human.species_name] = world_year
+				_last_war_tick[target_owner] = world_year
 				if human.battles_won == 5 and not human.is_hero:
 					human.is_hero = true
 					human.hero_name = _generate_hero_name(human.species_name, human.battles_won ^ human.age_ticks ^ human.grid_position.x)
@@ -319,7 +397,11 @@ func _update_evolution() -> void:
 	var to_remove: Array[Human] = []
 	for human in humans:
 		var cell := human.grid_position
-		human.update_evolution(world_grid.get_biome(cell))
+		var biome := world_grid.get_biome(cell)
+		# Apply habitat evo modifier from SpeciesData
+		var hmod := SpeciesDataScript.habitat_mod(human.species_name, biome)
+		human.evolution_score += (hmod["evo"] as float)
+		human.update_evolution(biome)
 		var prev_structure := world_grid.get_structure(cell)
 		var prev_fort := world_grid.get_fortification(cell)
 		world_grid.tick_presence(cell, human.species_name)
@@ -920,9 +1002,13 @@ func _planned_improvement(cell: Vector2i, owner: String) -> String:
 
 	if core_structure == "town" and near_water and distance <= 1 and tech_level >= 1:
 		return "dock"
-	if near_mountain and distance <= 2 and tech_level >= 1:
+	# Dwarves can mine in forest tiles too (not just mountain-adjacent)
+	var can_mine_here := near_mountain or (SpeciesDataScript.mine_non_mountain_allowed(owner) and biome == "forest")
+	if can_mine_here and distance <= 2 and tech_level >= 1:
 		return "mine"
-	if (biome == "grass" or biome == "sand") and distance <= 2:
+	# Elves grow food in forests; others need grass/sand
+	var can_farm := (biome == "grass" or biome == "sand") or (owner == "Elfos" and biome == "forest")
+	if can_farm and distance <= 2:
 		return "farm"
 	if core_structure in ["village", "town"] and distance <= 1:
 		return "housing"
@@ -1070,7 +1156,18 @@ func _update_technology() -> void:
 		if human.evolution_score > 0.0:
 			research_gain[human.species_name] += human.evolution_score * 0.05
 	for sp_name: String in research_gain.keys():
-		_species_research[sp_name] = (_species_research.get(sp_name, 0.0) as float) + research_gain[sp_name]
+		var base_gain := research_gain[sp_name] as float
+		# Apply per-species tech speed multiplier
+		var speed_mult := SpeciesDataScript.tech_speed_mult(sp_name)
+		# Orcs (and others) get bonus research during wars
+		var in_war := false
+		for key: String in _war_pairs.keys():
+			if key.contains(sp_name):
+				in_war = true
+				break
+		if in_war:
+			speed_mult += SpeciesDataScript.tech_war_bonus(sp_name)
+		_species_research[sp_name] = (_species_research.get(sp_name, 0.0) as float) + base_gain * speed_mult
 		var lvl: int = _species_tech.get(sp_name, 0) as int
 		if lvl < TECH_THRESHOLDS.size() and (_species_research[sp_name] as float) >= TECH_THRESHOLDS[lvl]:
 			_species_tech[sp_name] = lvl + 1
@@ -1138,6 +1235,14 @@ func _update_diplomacy() -> void:
 		living[h.species_name] = true
 	var sp_list: Array = living.keys()
 
+	# ── Passive grievance decay (dwarves) ─────────────────────────────────────
+	if world_year % 100 == 0:
+		var keys_to_update: Array = _species_grievances.keys().duplicate()
+		for g_key: String in keys_to_update:
+			var g := _species_grievances.get(g_key, 0) as int
+			if g > 0:
+				_species_grievances[g_key] = maxi(g - 1, 0)
+
 	for i in sp_list.size():
 		for j in range(i + 1, sp_list.size()):
 			var a: String = sp_list[i]
@@ -1152,16 +1257,86 @@ func _update_diplomacy() -> void:
 
 			if _dominant_religion(a) == _dominant_religion(b) and _dominant_religion(a) != "":
 				rel += 0.002
-				_set_relation(a, b, rel + 0.002)
+
+			# ── Human trade diplomacy bonus ────────────────────────────────────
+			# Humans improve relations faster with active cross-species trade
+			var has_cross_trade := false
+			for r: Dictionary in _trade_routes:
+				if r.get("mode", "") == "cross":
+					var rsa := r.get("species", "") as String
+					var rsb := r.get("partner", "") as String
+					if (rsa == a and rsb == b) or (rsa == b and rsb == a):
+						has_cross_trade = true
+						break
+			if has_cross_trade:
+				if a == "Humanos" or b == "Humanos":
+					rel += 0.0015   # humans are better diplomats through trade
+
+			# ── Orc Respeto por la Fuerza ─────────────────────────────────────
+			# Orcs respect strong militaries; weak ones invite aggression
+			if a == "Orcos" or b == "Orcos":
+				var orc_sp  := a if a == "Orcos" else b
+				var other_sp := b if a == "Orcos" else a
+				var orc_army   := (_species_armies.get(orc_sp, 0) as int)
+				var other_army := (_species_armies.get(other_sp, 0) as int)
+				var other_tech := (_species_tech.get(other_sp, 0) as int)
+				# Strength score = army + tech*2
+				var other_strength := float(other_army + other_tech * 2)
+				var orc_strength   := float(orc_army + (_species_tech.get(orc_sp, 0) as int) * 2)
+				if other_strength >= orc_strength * 0.8:
+					rel += 0.0005   # respect for strength
+				elif other_strength < orc_strength * 0.4:
+					rel -= 0.0008   # seeing weakness
 
 			_set_relation(a, b, rel)
 			rel = _get_relation(a, b)
 
-			if rel < -0.55 and not _war_pairs.has(key) and not _alliance_pairs.has(key):
-				_war_pairs[key] = true
-				_log_event("Año %d: ¡Los %s declaran guerra a los %s!" % [world_year, a, b], a)
+			# ── Dwarf Libro de Agravios war trigger ────────────────────────────
+			# If dwarves have high grievance against a species, they declare war
+			var enano_sp := ""
+			var aggressor_sp := ""
+			if a == "Enanos":
+				enano_sp = a; aggressor_sp = b
+			elif b == "Enanos":
+				enano_sp = b; aggressor_sp = a
+			if enano_sp != "":
+				var g_key := _diplomacy_key("Enanos", aggressor_sp)
+				var grievance := _species_grievances.get(g_key, 0) as int
+				if grievance >= SpeciesDataScript.dwarf_grievance_war_threshold() and not _war_pairs.has(key):
+					_war_pairs[key] = true
+					_species_grievances[g_key] = 0  # reset after declaring war
+					_log_event("Año %d: ¡Los Enanos desempolvaron el Libro de Agravios! Guerra declarada contra los %s." % [world_year, aggressor_sp], "Enanos")
+				elif grievance >= SpeciesDataScript.dwarf_grievance_warning_threshold() and not _war_pairs.has(key):
+					# Diplomatic warning before war
+					if world_year % 80 == 0:
+						_log_event("Año %d: Los Enanos exigen reparaciones a los %s. Agravio acumulado: %d." % [world_year, aggressor_sp, grievance], "Enanos")
+						_set_relation("Enanos", aggressor_sp, _get_relation("Enanos", aggressor_sp) - 0.05)
 
-			if _war_pairs.has(key) and rel > -0.25:
+			# ── War declaration threshold (species-specific aggressiveness) ────
+			var ai_a := SpeciesDataScript.ai_personality(a)
+			var ai_b := SpeciesDataScript.ai_personality(b)
+			var agr_a := (ai_a.get("agresividad", 0.5) as float)
+			var agr_b := (ai_b.get("agresividad", 0.5) as float)
+			# Threshold: aggressive species go to war at less negative relation
+			var war_threshold := -0.55 + (maxf(agr_a, agr_b) - 0.5) * 0.20
+			if rel < war_threshold and not _war_pairs.has(key) and not _alliance_pairs.has(key):
+				_war_pairs[key] = true
+				_last_war_tick[a] = world_year
+				_last_war_tick[b] = world_year
+				_log_event("Año %d: ¡Los %s declaran guerra a los %s!" % [world_year, a, b], a)
+				# Dwarf grievance: being attacked by non-dwarves adds to the book
+				if b == "Enanos":
+					var g_key2 := _diplomacy_key("Enanos", a)
+					_species_grievances[g_key2] = (_species_grievances.get(g_key2, 0) as int) + SpeciesDataScript.grievance_points("ataque_ciudad")
+				elif a == "Enanos":
+					var g_key2 := _diplomacy_key("Enanos", b)
+					_species_grievances[g_key2] = (_species_grievances.get(g_key2, 0) as int) + SpeciesDataScript.grievance_points("ataque_ciudad")
+
+			# ── Peace threshold (diplomatic species forgive sooner) ────────────
+			var dip_a := (ai_a.get("diplomacia", 0.5) as float)
+			var dip_b := (ai_b.get("diplomacia", 0.5) as float)
+			var peace_threshold := -0.25 - (maxf(dip_a, dip_b) - 0.5) * 0.10
+			if _war_pairs.has(key) and rel > peace_threshold:
 				_war_pairs.erase(key)
 				_log_event("Año %d: Los %s y los %s firman una tregua" % [world_year, a, b], a)
 
@@ -1300,7 +1475,10 @@ func _update_trade_v2() -> void:
 			if (human.grid_position - hub_cell).length() <= 2.5:
 				var is_dock := world_grid.get_improvement(hub_cell) == "dock"
 				var is_cross := cross_hubs.has(hub_cell)
-				var bonus := 0.025 if is_cross else (0.015 if is_dock else 0.010)
+				# Species-specific trade bonus (Humans benefit most)
+				var species_trade_mult := SpeciesDataScript.trade_evo_bonus(human.species_name)
+				var base_bonus := 0.025 if is_cross else (0.015 if is_dock else 0.010)
+				var bonus := base_bonus * (species_trade_mult / 0.015)
 				human.evolution_score += bonus
 				break
 
@@ -1838,6 +2016,209 @@ func _draw_religion_symbol(cx: float, cy: float, religion: String) -> void:
 			draw_line(Vector2(cx - 2.0, cy + 2.5), Vector2(cx, cy - 0.5), Color(0.85, 0.15, 0.15, 0.9), 1.5)
 			draw_line(Vector2(cx + 2.0, cy + 2.5), Vector2(cx, cy - 0.5), Color(0.85, 0.15, 0.15, 0.9), 1.5)
 
+# ── Species event system ──────────────────────────────────────────────────────
+
+func _tick_species_events() -> void:
+	var living: Dictionary = {}
+	for h in humans:
+		living[h.species_name] = true
+
+	for sp: String in living.keys():
+		var era := world_year / 200
+		var era_key := sp + "|" + str(era)
+		if _last_species_event_era.has(era_key):
+			continue  # one event per species per era
+
+		match sp:
+			"Humanos":  _try_human_event(sp, era_key)
+			"Elfos":    _try_elf_event(sp, era_key)
+			"Orcos":    _try_orc_event(sp, era_key)
+			"Enanos":   _try_enano_event(sp, era_key)
+
+func _try_human_event(sp: String, era_key: String) -> void:
+	var stock := _resource_stock(sp)
+	var active_routes := 0
+	for r: Dictionary in _trade_routes:
+		if r.get("species", "") == sp or r.get("partner", "") == sp:
+			active_routes += 1
+	# Trade boom: 3+ active routes
+	if active_routes >= 3 and rng.randf() < 0.30:
+		stock["food"] = (stock.get("food", 0.0) as float) + 10.0
+		stock["iron"] = (stock.get("iron", 0.0) as float) + 6.0
+		for h in humans:
+			if h.species_name == sp:
+				h.evolution_score += 1.5
+		_log_event("Año %d: ¡Los Humanos viven un Auge Comercial! El oro fluye por las rutas de intercambio." % world_year, sp)
+		_last_species_event_era[era_key] = true
+		return
+	# Expansionary fever: high population + no war
+	var pop := 0
+	for h in humans:
+		if h.species_name == sp:
+			pop += 1
+	if pop >= 30 and not _any_war(sp) and rng.randf() < 0.25:
+		for h in humans:
+			if h.species_name == sp:
+				h.evolution_score += 0.8
+		_log_event("Año %d: Los Humanos sienten fiebre de expansión. Nuevas tierras llaman a los colonos." % world_year, sp)
+		_last_species_event_era[era_key] = true
+
+func _try_elf_event(sp: String, era_key: String) -> void:
+	# Count forest tiles owned by elves
+	var forest_tiles := 0
+	var total_tiles := 0
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			var cell := Vector2i(x, y)
+			if world_grid.get_owner(cell) == sp:
+				total_tiles += 1
+				if world_grid.get_biome(cell) == "forest":
+					forest_tiles += 1
+	# Forest coverage check
+	if total_tiles > 0:
+		var forest_pct := float(forest_tiles) / float(total_tiles)
+		if forest_pct < 0.40 and rng.randf() < 0.40:
+			for h in humans:
+				if h.species_name == sp:
+					h.evolution_score -= 1.0
+			_log_event("Año %d: El territorio élfico pierde su cobertura forestal. Los druidas lloran por el bosque menguante." % world_year, sp)
+			_last_species_event_era[era_key] = true
+			return
+	# Floración: high forest coverage + peace
+	if total_tiles > 0 and float(forest_tiles) / float(total_tiles) >= 0.70 and not _any_war(sp) and rng.randf() < 0.35:
+		var stock := _resource_stock(sp)
+		stock["food"] = (stock.get("food", 0.0) as float) + 12.0
+		for h in humans:
+			if h.species_name == sp:
+				h.evolution_score += 2.0
+		_log_event("Año %d: ¡Los bosques élficos florecen en primavera sagrada! El Árbol Madre irradia vida." % world_year, sp)
+		_last_species_event_era[era_key] = true
+
+func _try_orc_event(sp: String, era_key: String) -> void:
+	# Inactivity: no war for too long causes internal conflict
+	var ticks_since_war := world_year - (_last_war_tick.get(sp, 0) as int)
+	if ticks_since_war > SpeciesDataScript.orc_inactivity_war_ticks() and rng.randf() < 0.45:
+		for h in humans:
+			if h.species_name == sp:
+				h.evolution_score -= 0.8
+		_log_event("Año %d: La paz pudre los campamentos orcos. Los clanes se enfrentan por el liderazgo." % world_year, sp)
+		_last_species_event_era[era_key] = true
+		return
+	# Tribute demand: orcs demand tribute from weakest neighbor
+	_try_orc_tribute_demand(sp)
+	_last_species_event_era[era_key] = true
+
+func _try_orc_tribute_demand(orc_sp: String) -> void:
+	var orc_army := (_species_armies.get(orc_sp, 0) as int)
+	var best_target := ""
+	var best_weakness := -1.0
+	var living: Dictionary = {}
+	for h in humans:
+		living[h.species_name] = true
+	for sp: String in living.keys():
+		if sp == orc_sp:
+			continue
+		var key := _diplomacy_key(orc_sp, sp)
+		if _war_pairs.has(key) or _alliance_pairs.has(key):
+			continue
+		var target_army := (_species_armies.get(sp, 0) as int)
+		var target_tech := (_species_tech.get(sp, 0) as int)
+		var orc_strength := float(orc_army + (_species_tech.get(orc_sp, 0) as int) * 2)
+		var tgt_strength := float(target_army + target_tech * 2)
+		# Orcs demand tribute if they're meaningfully stronger
+		if orc_strength >= tgt_strength + 2.0:
+			var weakness := orc_strength - tgt_strength
+			if weakness > best_weakness:
+				best_weakness = weakness
+				best_target = sp
+	if best_target == "" or rng.randf() > 0.50:
+		return
+	var tribute_key := _diplomacy_key(orc_sp, best_target)
+	if _tribute_pending.has(tribute_key):
+		return
+	var amount := 8.0 + best_weakness * 1.5
+	_tribute_pending[tribute_key] = {"amount": amount, "expires": world_year + 60, "demander": orc_sp, "target": best_target}
+	_log_event("Año %d: Los Orcos exigen tributo a los %s (%s recursos). ¡Rechazarlo tiene consecuencias!" % [world_year, best_target, str(int(amount))], orc_sp)
+
+func _try_enano_event(sp: String, era_key: String) -> void:
+	var stock := _resource_stock(sp)
+	# Festival de cerveza: peace + food stockpile
+	var food := stock.get("food", 0.0) as float
+	if food > 40.0 and not _any_war(sp) and rng.randf() < 0.35:
+		for h in humans:
+			if h.species_name == sp:
+				h.evolution_score += 1.5
+		stock["food"] = food - 8.0   # cerveza consume reservas
+		_log_event("Año %d: ¡Los Enanos celebran el Gran Festival de Cerveza! La moral y la lealtad de los clanes se refuerzan." % world_year, sp)
+		_last_species_event_era[era_key] = true
+		return
+	# Discover new vein: mine tiles present
+	var mine_count := 0
+	for y in range(world_grid.height):
+		for x in range(world_grid.width):
+			if world_grid.get_owner(Vector2i(x, y)) == sp and world_grid.get_improvement(Vector2i(x, y)) == "mine":
+				mine_count += 1
+	if mine_count >= 2 and rng.randf() < 0.30:
+		stock["iron"] = (stock.get("iron", 0.0) as float) + 20.0
+		stock["stone"] = (stock.get("stone", 0.0) as float) + 15.0
+		_log_event("Año %d: ¡Los mineros enanos descubren una nueva veta profunda! Las bóvedas se llenan de mineral." % world_year, sp)
+		_last_species_event_era[era_key] = true
+
+func _any_war(species: String) -> bool:
+	for key: String in _war_pairs.keys():
+		if key.contains(species):
+			return true
+	return false
+
+# ── Elf deforestation sensitivity ─────────────────────────────────────────────
+func _on_forest_tile_cleared(cell: Vector2i) -> void:
+	# Only relevant when elves exist in the world
+	var elf_nearby := false
+	for h in humans:
+		if h.species_name == "Elfos" and h.grid_position.distance_to(cell) <= 12.0:
+			elf_nearby = true
+			break
+	if not elf_nearby:
+		return
+	# Who owns (or last owned) this tile — the responsible party
+	var former_owner := world_grid.get_owner(cell)
+	# If the tile belongs to elves themselves or is unclaimed, no penalty
+	if former_owner == "Elfos" or former_owner == "":
+		return
+	var log_key := _diplomacy_key("Elfos", former_owner)
+	_deforestation_log[log_key] = (_deforestation_log.get(log_key, 0) as int) + 1
+	var count := _deforestation_log.get(log_key, 0) as int
+	_set_relation("Elfos", former_owner, _get_relation("Elfos", former_owner) - 0.012)
+	if count == SpeciesDataScript.elf_deforestation_warning_threshold():
+		_log_event("Año %d: Los Elfos protestan por la tala de %s cerca de sus bosques sagrados." % [world_year, former_owner], "Elfos")
+	elif count >= SpeciesDataScript.elf_deforestation_war_threshold():
+		var war_key := _diplomacy_key("Elfos", former_owner)
+		if not _war_pairs.has(war_key):
+			_war_pairs[war_key] = true
+			_last_war_tick["Elfos"] = world_year
+			_log_event("Año %d: ¡Los Elfos declaran guerra a los %s por destrucción masiva de sus bosques sagrados!" % [world_year, former_owner], "Elfos")
+
+# ── Tribute resolution ────────────────────────────────────────────────────────
+func _resolve_expired_tributes() -> void:
+	var to_erase: Array[String] = []
+	for trib_key: String in _tribute_pending.keys():
+		var t := _tribute_pending[trib_key] as Dictionary
+		if world_year >= (t.get("expires", 0) as int):
+			var demander := t.get("demander", "") as String
+			var target   := t.get("target", "")   as String
+			# Tribute expired = rejected -> relation penalty, possible war
+			if demander != "" and target != "":
+				_set_relation(demander, target, _get_relation(demander, target) - 0.15)
+				_last_war_tick[demander] = world_year
+				if rng.randf() < 0.60 and not _war_pairs.has(_diplomacy_key(demander, target)):
+					_war_pairs[_diplomacy_key(demander, target)] = true
+					_log_event("Año %d: Los %s rechazaron el tributo. Los Orcos desenvainan sus armas." % [world_year, target], demander)
+				else:
+					_log_event("Año %d: El tributo exigido a los %s venció sin respuesta." % [world_year, target], demander)
+			to_erase.append(trib_key)
+	for k: String in to_erase:
+		_tribute_pending.erase(k)
+
 func _species_stats() -> Array[String]:
 	var result: Array[String] = []
 	var stats: Dictionary = {}
@@ -1894,6 +2275,36 @@ func _species_stats() -> Array[String]:
 	if result.is_empty():
 		result.append("Sin entidades — usa tab Entidades")
 		return result
+	# ── Special system status ────────────────────────────────────────────────
+	var special_lines: Array[String] = []
+	# Dwarf grievances
+	for g_key: String in _species_grievances.keys():
+		var g := _species_grievances.get(g_key, 0) as int
+		if g > 0:
+			var parts := g_key.split("|")
+			if parts.size() == 2:
+				var who := parts[0] if parts[0] == "Enanos" else parts[1]
+				var whom := parts[1] if parts[0] == "Enanos" else parts[0]
+				special_lines.append("📖 Agravio Enano vs %s: %d/80" % [whom, g])
+	# Pending tributes
+	for trib_key: String in _tribute_pending.keys():
+		var t := _tribute_pending[trib_key] as Dictionary
+		var tgt := t.get("target", "?") as String
+		var expires := t.get("expires", 0) as int
+		special_lines.append("💰 Tributo exigido a %s (vence año %d)" % [tgt, expires])
+	# Deforestation warnings
+	for def_key: String in _deforestation_log.keys():
+		var cnt := _deforestation_log.get(def_key, 0) as int
+		if cnt >= SpeciesDataScript.elf_deforestation_warning_threshold():
+			var parts := def_key.split("|")
+			if parts.size() == 2:
+				var other := parts[1] if parts[0] == "Elfos" else parts[0]
+				special_lines.append("🌲 Deforestación élfica (%s): %d/20" % [other, cnt])
+
+	if not special_lines.is_empty():
+		result.append("── Sistemas Especiales ──")
+		result.append_array(special_lines)
+
 	var has_diplo := false
 	for key: String in _war_pairs.keys():
 		var p := key.split("|")
@@ -1909,6 +2320,25 @@ func _species_stats() -> Array[String]:
 				result.append("── Diplomacia ──")
 				has_diplo = true
 			result.append("★ %s ↔ %s" % [p[0], p[1]])
+	# Relations summary (only non-neutral pairs)
+	var has_rel := false
+	for ii in SPECIES_LIBRARY.size():
+		for jj in range(ii + 1, SPECIES_LIBRARY.size()):
+			var sa := SPECIES_LIBRARY[ii]["name"] as String
+			var sb := SPECIES_LIBRARY[jj]["name"] as String
+			var rel := _get_relation(sa, sb)
+			if absf(rel) >= 0.10:
+				if not has_rel:
+					result.append("── Relaciones ──")
+					has_rel = true
+				var bar := ""
+				if rel >= 0.50:   bar = "+++"
+				elif rel >= 0.25: bar = "++"
+				elif rel >= 0.10: bar = "+"
+				elif rel <= -0.50: bar = "---"
+				elif rel <= -0.25: bar = "--"
+				else:              bar = "-"
+				result.append("%s %s ↔ %s" % [bar, sa, sb])
 	return result
 
 func _find_territory_clusters() -> Array:
