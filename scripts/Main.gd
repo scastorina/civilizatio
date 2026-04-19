@@ -332,17 +332,17 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 
 func _serialize_human(human: Human) -> Dictionary:
 	return {
-		"x": human.grid_position.x,
-		"y": human.grid_position.y,
-		"species": human.species_name,
-		"evolution_score": human.evolution_score,
-		"age_ticks": human.age_ticks,
-		"battles_won": human.battles_won,
-		"is_hero": human.is_hero,
-		"hero_name": human.hero_name,
-		"infected": human.infected,
-		"on_fire": human.on_fire,
-		"religion": human.religion,
+		"x": human.grid_position.x as int,
+		"y": human.grid_position.y as int,
+		"species": human.species_name as String,
+		"evolution_score": human.evolution_score as float,
+		"age_ticks": human.age_ticks as int,
+		"battles_won": human.battles_won as int,
+		"is_hero": human.is_hero as bool,
+		"hero_name": human.hero_name as String,
+		"infected": human.infected as bool,
+		"on_fire": human.on_fire as bool,
+		"religion": human.religion as String,
 	}
 
 func _restore_human(state: Dictionary) -> void:
