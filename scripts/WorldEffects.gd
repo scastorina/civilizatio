@@ -29,6 +29,15 @@ func tick(world_grid: WorldGrid, humans: Array, rng: RandomNumberGenerator) -> v
 	_tick_plague(humans, rng)
 	_advance_effects()
 
+func _build_humans_by_cell(humans: Array) -> Dictionary:
+	var by_cell: Dictionary = {}
+	for human: Human in humans:
+		var cell := human.grid_position
+		if not by_cell.has(cell):
+			by_cell[cell] = []
+		(by_cell[cell] as Array).append(human)
+	return by_cell
+
 
 func _power_meteor(center: Vector2i, world_grid: WorldGrid, humans: Array, world_year: int, log_event: Callable) -> void:
 	effects.append({"type": "impact", "cell": center, "age": 0, "max_age": 20})
@@ -98,11 +107,12 @@ func _tick_fire(world_grid: WorldGrid, humans: Array, rng: RandomNumberGenerator
 	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	var new_fires: Array[Vector2i] = []
 	var to_erase: Array[Vector2i] = []
+	var humans_by_cell := _build_humans_by_cell(humans)
 	for cell: Vector2i in fire_cells.keys():
 		fire_cells[cell] = (fire_cells[cell] as int) + 1
-		for human: Human in humans:
-			if human.grid_position == cell:
-				human.on_fire = true
+		var humans_here := humans_by_cell.get(cell, []) as Array
+		for human: Human in humans_here:
+			human.on_fire = true
 		if (fire_cells[cell] as int) > 40:
 			world_grid.set_owner(cell, "")
 			if world_grid.get_biome(cell) == "forest":
@@ -127,18 +137,22 @@ func _tick_fire(world_grid: WorldGrid, humans: Array, rng: RandomNumberGenerator
 
 
 func _tick_plague(humans: Array, rng: RandomNumberGenerator) -> void:
-	var infected_positions: Array[Vector2i] = []
+	var infected_counts: Dictionary = {}
 	for human: Human in humans:
 		if human.infected:
-			infected_positions.append(human.grid_position)
+			infected_counts[human.grid_position] = (infected_counts.get(human.grid_position, 0) as int) + 1
 	for human: Human in humans:
 		if human.infected:
 			continue
-		for infected_position: Vector2i in infected_positions:
-			if (human.grid_position - infected_position).length() <= 1.5:
-				if rng.randf() < 0.04:
-					human.infected = true
-					break
+		var exposure := 0
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				exposure += infected_counts.get(human.grid_position + Vector2i(dx, dy), 0) as int
+		if exposure <= 0:
+			continue
+		var infection_chance := 1.0 - pow(0.96, float(exposure))
+		if rng.randf() < infection_chance:
+			human.infected = true
 
 
 func _advance_effects() -> void:

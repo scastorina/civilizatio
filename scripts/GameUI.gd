@@ -12,7 +12,10 @@ signal power_selected(idx: int)
 signal chronicle_reply_submitted(text: String)
 
 const BAR_H   := 72
-const PANEL_H := 108    # taller panel: room for buttons + info strip
+const PANEL_H := 280
+const SIDEBAR_W := 430.0
+const SIDEBAR_TOP := 16.0
+const SIDEBAR_GAP := 8.0
 const BTN     := 54
 const TAB_W   := 84.0
 const GAP     := 4
@@ -165,22 +168,27 @@ func is_reply_input_focused() -> bool:
 # ── Construcción ──────────────────────────────────────────────────────────────
 
 func _build() -> void:
-	# Panel de herramientas  — #171e2e con línea de acento
+	# Barra flotante derecha (estilo panel táctico)
+	var bar := Panel.new()
+	bar.anchor_left   = 1.0; bar.anchor_top    = 0.0
+	bar.anchor_right  = 1.0; bar.anchor_bottom = 0.0
+	bar.offset_left   = -(SIDEBAR_W + float(PAD))
+	bar.offset_top    = SIDEBAR_TOP
+	bar.offset_right  = -float(PAD)
+	bar.offset_bottom = SIDEBAR_TOP + float(BAR_H)
+	_style_panel(bar, Color(0.035, 0.047, 0.071, 0.92), false)
+	add_child(bar)
+
+	# Panel de herramientas flotante (debajo de barra superior)
 	_tool_panel = Panel.new()
-	_tool_panel.anchor_left   = 0.0; _tool_panel.anchor_top    = 1.0
-	_tool_panel.anchor_right  = 1.0; _tool_panel.anchor_bottom = 1.0
-	_tool_panel.offset_top    = -(BAR_H + PANEL_H)
-	_tool_panel.offset_bottom = -BAR_H
+	_tool_panel.anchor_left   = 1.0; _tool_panel.anchor_top    = 0.0
+	_tool_panel.anchor_right  = 1.0; _tool_panel.anchor_bottom = 0.0
+	_tool_panel.offset_left   = -(SIDEBAR_W + float(PAD))
+	_tool_panel.offset_top    = SIDEBAR_TOP + float(BAR_H) + SIDEBAR_GAP
+	_tool_panel.offset_right  = -float(PAD)
+	_tool_panel.offset_bottom = SIDEBAR_TOP + float(BAR_H + PANEL_H) + SIDEBAR_GAP
 	_style_panel(_tool_panel, C_SURF2, true)
 	add_child(_tool_panel)
-
-	# Barra inferior  — #090c12
-	var bar := Panel.new()
-	bar.anchor_left   = 0.0; bar.anchor_top    = 1.0
-	bar.anchor_right  = 1.0; bar.anchor_bottom = 1.0
-	bar.offset_top    = -BAR_H; bar.offset_bottom = 0.0
-	_style_panel(bar, Color(0.035, 0.047, 0.071, 0.98), false)
-	add_child(bar)
 
 	_build_bar(bar)
 	_build_terrain_content()
@@ -240,8 +248,8 @@ func _build_bar(bar: Panel) -> void:
 
 	# ── Consejo / crónica ──
 	_chronicle_prompt_label = Label.new()
-	_chronicle_prompt_label.position = Vector2(x, yc + 2.0)
-	_chronicle_prompt_label.size = Vector2(220.0, 18.0)
+	_chronicle_prompt_label.position = Vector2(float(PAD), -34.0)
+	_chronicle_prompt_label.size = Vector2(SIDEBAR_W - float(PAD * 2), 18.0)
 	_chronicle_prompt_label.text = "Consejo:"
 	_chronicle_prompt_label.add_theme_font_size_override("font_size", 11)
 	_chronicle_prompt_label.add_theme_color_override("font_color", C_ACC)
@@ -249,7 +257,8 @@ func _build_bar(bar: Panel) -> void:
 
 	for i in range(3):
 		var reply_btn := _make_text_btn(Color(0.80, 0.65, 0.22), 90.0, 28.0)
-		reply_btn.position = Vector2(x + i * 94.0, yc + 20.0)
+		reply_btn.position = Vector2(float(PAD) + i * 136.0, -2.0)
+		reply_btn.size = Vector2(132.0, 22.0)
 		reply_btn.visible = false
 		var oi := i
 		reply_btn.pressed.connect(func(): _on_chronicle_reply_pressed(oi))
@@ -461,6 +470,12 @@ func _on_speed(idx: int) -> void:
 	current_speed_idx = idx
 	_refresh_speed_highlights()
 	time_speed_changed.emit(idx)
+
+func set_speed_idx(idx: int, emit_signal: bool = false) -> void:
+	current_speed_idx = clampi(idx, 0, SPEED_DEFS.size() - 1)
+	_refresh_speed_highlights()
+	if emit_signal:
+		time_speed_changed.emit(current_speed_idx)
 
 func _on_map(idx: int) -> void:
 	current_map_idx = idx
