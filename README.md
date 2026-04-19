@@ -38,15 +38,22 @@ Prototipo simple en **Godot 4** para iterar una simulación de mapa + especies.
 
 ## Menú de configuración
 
-En el panel lateral podés ajustar:
+En el menú inicial (nueva crónica) podés ajustar:
 
 - **Mapa**:
-  - Aleatorio
-  - Tipo Tierra (bandas latitudinales simples)
-  - Continente (masa principal rodeada de agua)
-- **Cantidad de especies activas** (1 a 4).
-- **Adelantador de tiempo** (x1/x2/x5/x10).
-- **Aplicar y regenerar** para refrescar el mundo con esa configuración.
+  - Islas del Reino
+  - Mundo Antiguo (bandas latitudinales simples)
+  - Gran Continente (masa principal rodeada de agua)
+- **Población inicial**:
+  - Pequeña (12)
+  - Media (20)
+  - Grande (40)
+
+En pausa (`Esc`) podés:
+- continuar el reino,
+- guardar crónica,
+- cargar crónica,
+- iniciar nueva crónica.
 
 ## Ejecutar en Godot 4
 

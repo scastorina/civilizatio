@@ -3,7 +3,7 @@ extends Node2D
 const TILE_SIZE := 16
 const WORLD_WIDTH := 96
 const WORLD_HEIGHT := 54
-const INITIAL_HUMANS := 20
+const INITIAL_HUMANS_DEFAULT := 20
 const MAX_HUMANS := 200
 const MOVE_TICK_SECONDS := 0.35
 const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain", "snow", "jungle", "swamp"]
@@ -111,6 +111,11 @@ var _effects: Array[Dictionary] = world_effects.effects
 var _main_menu_layer: CanvasLayer
 var _main_menu_panel: Panel
 var _game_started := false
+var _speed_before_pause := 1
+var initial_population := INITIAL_HUMANS_DEFAULT
+var _menu_map_idx := 0
+var _menu_population_idx := 1
+const MENU_POP_OPTIONS: Array[int] = [12, 20, 40]
 
 func _ready() -> void:
 	rng.randomize()
@@ -324,7 +329,7 @@ func _spawn_initial_humans() -> void:
 	var walkable := world_grid.get_all_walkable_cells()
 	_shuffle_cells(walkable)
 
-	var count := mini(INITIAL_HUMANS, walkable.size())
+	var count := mini(initial_population, walkable.size())
 	for i in range(count):
 		var species: Dictionary = SPECIES_LIBRARY[i % SPECIES_LIBRARY.size()]
 		_spawn_human_at(walkable[i], species)
@@ -441,33 +446,93 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 	subtitle.add_theme_font_size_override("font_size", 14)
 	vb.add_child(subtitle)
 
-	var btn_new := Button.new()
-	btn_new.text = "Nueva partida"
-	btn_new.custom_minimum_size = Vector2(0, 42)
-	btn_new.pressed.connect(func():
-		_regenerate_world()
-		_start_game_from_menu(false)
-	)
-	vb.add_child(btn_new)
+	if not paused_menu:
+		var map_label := Label.new()
+		map_label.text = "Tipo de mundo"
+		map_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		vb.add_child(map_label)
 
-	var btn_continue := Button.new()
-	btn_continue.text = "Continuar"
-	btn_continue.custom_minimum_size = Vector2(0, 42)
-	btn_continue.disabled = not paused_menu
-	btn_continue.pressed.connect(func(): _start_game_from_menu(false))
-	vb.add_child(btn_continue)
+		var map_selector := OptionButton.new()
+		map_selector.add_item("Islas del Reino", 0)
+		map_selector.add_item("Mundo Antiguo", 1)
+		map_selector.add_item("Gran Continente", 2)
+		map_selector.selected = clampi(_menu_map_idx, 0, 2)
+		map_selector.item_selected.connect(func(idx: int): _menu_map_idx = idx)
+		vb.add_child(map_selector)
 
-	var btn_load := Button.new()
-	btn_load.text = "Cargar partida"
-	btn_load.custom_minimum_size = Vector2(0, 42)
-	btn_load.pressed.connect(func():
-		if _load_game():
+		var pop_label := Label.new()
+		pop_label.text = "Población inicial"
+		pop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		vb.add_child(pop_label)
+
+		var pop_selector := OptionButton.new()
+		pop_selector.add_item("Pequeña · 12", 0)
+		pop_selector.add_item("Media · 20", 1)
+		pop_selector.add_item("Grande · 40", 2)
+		pop_selector.selected = clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)
+		pop_selector.item_selected.connect(func(idx: int): _menu_population_idx = idx)
+		vb.add_child(pop_selector)
+
+		var btn_start := Button.new()
+		btn_start.text = "Iniciar crónica"
+		btn_start.custom_minimum_size = Vector2(0, 42)
+		btn_start.pressed.connect(func():
+			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
+			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
+			_regenerate_world()
 			_start_game_from_menu(false)
-	)
-	vb.add_child(btn_load)
+		)
+		vb.add_child(btn_start)
+
+		var btn_load_initial := Button.new()
+		btn_load_initial.text = "Cargar crónica"
+		btn_load_initial.custom_minimum_size = Vector2(0, 42)
+		btn_load_initial.pressed.connect(func():
+			if _load_game():
+				_start_game_from_menu(false)
+		)
+		vb.add_child(btn_load_initial)
+	else:
+		_speed_before_pause = maxi(current_speed_idx, 1)
+		var year_label := Label.new()
+		year_label.text = "Año %d" % world_year
+		year_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(year_label)
+
+		var btn_continue := Button.new()
+		btn_continue.text = "Continuar reino"
+		btn_continue.custom_minimum_size = Vector2(0, 42)
+		btn_continue.pressed.connect(func(): _start_game_from_menu(true))
+		vb.add_child(btn_continue)
+
+		var btn_save := Button.new()
+		btn_save.text = "Guardar crónica"
+		btn_save.custom_minimum_size = Vector2(0, 42)
+		btn_save.pressed.connect(func(): _save_game())
+		vb.add_child(btn_save)
+
+		var btn_load_pause := Button.new()
+		btn_load_pause.text = "Cargar crónica"
+		btn_load_pause.custom_minimum_size = Vector2(0, 42)
+		btn_load_pause.pressed.connect(func():
+			if _load_game():
+				_start_game_from_menu(false)
+		)
+		vb.add_child(btn_load_pause)
+
+		var btn_new_pause := Button.new()
+		btn_new_pause.text = "Nueva crónica"
+		btn_new_pause.custom_minimum_size = Vector2(0, 42)
+		btn_new_pause.pressed.connect(func():
+			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
+			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
+			_regenerate_world()
+			_start_game_from_menu(false)
+		)
+		vb.add_child(btn_new_pause)
 
 	var btn_exit := Button.new()
-	btn_exit.text = "Salir"
+	btn_exit.text = "Salir del reino"
 	btn_exit.custom_minimum_size = Vector2(0, 42)
 	btn_exit.pressed.connect(func(): get_tree().quit())
 	vb.add_child(btn_exit)
@@ -477,23 +542,28 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 	if ui != null:
 		ui.visible = false
 
-func _start_game_from_menu(keep_paused: bool) -> void:
+func _start_game_from_menu(restore_pause_speed: bool) -> void:
 	_game_started = true
 	if _main_menu_panel != null:
 		_main_menu_panel.queue_free()
 		_main_menu_panel = null
 	if ui != null:
 		ui.visible = true
-	if not keep_paused and current_speed_idx == 0:
+	if restore_pause_speed:
+		current_speed_idx = clampi(_speed_before_pause, 1, TIME_SPEEDS.size() - 1)
+	elif current_speed_idx == 0:
 		current_speed_idx = 1
-		if ui != null:
-			ui.set_speed_idx(current_speed_idx)
+	if ui != null:
+		ui.set_speed_idx(current_speed_idx)
 
 func _save_game() -> bool:
+	var speed_to_save := current_speed_idx
+	if not _game_started and _speed_before_pause > 0:
+		speed_to_save = _speed_before_pause
 	var save_data := {
 		"version": 1,
 		"world_year": world_year,
-		"current_speed_idx": current_speed_idx,
+		"current_speed_idx": speed_to_save,
 		"current_map_idx": current_map_idx,
 		"move_tick_accumulator": move_tick_accumulator,
 		"world_grid": world_grid.export_state(),
