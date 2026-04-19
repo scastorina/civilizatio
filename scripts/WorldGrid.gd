@@ -92,32 +92,51 @@ func tick_presence(cell: Vector2i, species: String) -> void:
 		_structures[cell.y][cell.x] = "camp"
 
 func get_structure(cell: Vector2i) -> String:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _structures.size():
 		return ""
-	return _structures[cell.y][cell.x]
+	var row: Array = _structures[cell.y]
+	if cell.x >= row.size():
+		return ""
+	return row[cell.x]
 
 func set_structure(cell: Vector2i, structure: String) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _structures.size():
+		return
+	var row: Array = _structures[cell.y]
+	if cell.x >= row.size():
 		return
 	_structures[cell.y][cell.x] = structure
 
 func get_fortification(cell: Vector2i) -> int:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _fortifications.size():
 		return 0
-	return _fortifications[cell.y][cell.x] as int
+	var row: Array = _fortifications[cell.y]
+	if cell.x >= row.size():
+		return 0
+	return row[cell.x] as int
 
 func set_fortification(cell: Vector2i, level: int) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _fortifications.size():
+		return
+	var row: Array = _fortifications[cell.y]
+	if cell.x >= row.size():
 		return
 	_fortifications[cell.y][cell.x] = max(level, 0)
 
 func update_fortification(cell: Vector2i, species: String, tech_level: int) -> int:
 	if not is_in_bounds(cell) or cell.y >= _owners.size():
 		return 0
-	if (_owners[cell.y] as Array)[cell.x] != species:
+	var orow: Array = _owners[cell.y]
+	if cell.x >= orow.size():
+		return 0
+	if orow[cell.x] != species:
 		return get_fortification(cell)
+	if cell.y >= _fortifications.size() or cell.x >= (_fortifications[cell.y] as Array).size():
+		return 0
 	var current := _fortifications[cell.y][cell.x] as int
 	var structure := get_structure(cell)
+	if cell.y >= _presence.size() or cell.x >= (_presence[cell.y] as Array).size():
+		return current
 	var presence := _presence[cell.y][cell.x] as int
 	var target_level := current
 
@@ -133,12 +152,18 @@ func update_fortification(cell: Vector2i, species: String, tech_level: int) -> i
 	return _fortifications[cell.y][cell.x] as int
 
 func get_improvement(cell: Vector2i) -> String:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _improvements.size():
 		return ""
-	return _improvements[cell.y][cell.x]
+	var row: Array = _improvements[cell.y]
+	if cell.x >= row.size():
+		return ""
+	return row[cell.x]
 
 func set_improvement(cell: Vector2i, improvement: String) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _improvements.size():
+		return
+	var row: Array = _improvements[cell.y]
+	if cell.x >= row.size():
 		return
 	_improvements[cell.y][cell.x] = improvement
 
@@ -297,12 +322,18 @@ func _generate_random() -> void:
 		_tiles.append(row)
 
 func get_biome(cell: Vector2i) -> String:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _tiles.size():
 		return ""
-	return _tiles[cell.y][cell.x]
+	var row: Array = _tiles[cell.y]
+	if cell.x >= row.size():
+		return ""
+	return row[cell.x]
 
 func set_biome(cell: Vector2i, biome: String) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _tiles.size():
+		return
+	var row: Array = _tiles[cell.y]
+	if cell.x >= row.size():
 		return
 	_tiles[cell.y][cell.x] = biome
 
