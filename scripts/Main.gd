@@ -430,13 +430,13 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 	_main_menu_panel.add_child(vb)
 
 	var title := Label.new()
-	title.text = "CIVILIZATIO"
+	title.text = "CRÓNICAS DE CIVILIZATIO"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 30)
 	vb.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Simulación viva de civilizaciones"
+	subtitle.text = "Forja reinos, guerras y leyendas en la era medieval"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_font_size_override("font_size", 14)
 	vb.add_child(subtitle)

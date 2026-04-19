@@ -11,7 +11,7 @@ signal regenerate_requested()
 signal power_selected(idx: int)
 signal chronicle_reply_submitted(text: String)
 
-const BAR_H   := 72
+const BAR_H   := 176
 const PANEL_H := 280
 const SIDEBAR_W := 430.0
 const SIDEBAR_TOP := 16.0
@@ -150,7 +150,7 @@ func setup_species(species: Array[Dictionary]) -> void:
 func set_chronicle_prompt(text: String, waiting: bool, options: Array[String] = []) -> void:
 	if _chronicle_prompt_label == null:
 		return
-	_chronicle_prompt_label.text = text if waiting else "Consejo:"
+	_chronicle_prompt_label.text = text if waiting else "Crónicas del Reino:"
 	for i in _chronicle_reply_buttons.size():
 		var btn := _chronicle_reply_buttons[i]
 		if waiting and i < options.size():
@@ -200,7 +200,9 @@ func _build() -> void:
 
 func _build_bar(bar: Panel) -> void:
 	var x  := float(PAD)
-	var yc := float(BAR_H - BTN) / 2.0
+	var y_tabs := 8.0
+	var y_controls := 78.0
+	var tab_w := (SIDEBAR_W - float(PAD * 2) - 3.0 * float(GAP)) / 4.0
 
 	# ── Botones de pestaña con acento de color ──
 	for td: Array in TAB_DEFS:
@@ -208,57 +210,54 @@ func _build_bar(bar: Panel) -> void:
 		var ticon := td[1] as String
 		var tlbl  := td[2] as String
 		var tcol  := td[3] as Color
-		var btn   := _make_icon_btn(ticon, tlbl, tcol, TAB_W, float(BTN))
-		btn.position = Vector2(x, yc)
+		var btn   := _make_icon_btn(ticon, tlbl, tcol, tab_w, 58.0)
+		btn.position = Vector2(x, y_tabs)
 		bar.add_child(btn)
 		_tab_btns[tid] = btn
 		# Línea de acento superior (activa = opaca, inactiva = transparente)
 		var acc := ColorRect.new()
 		acc.position = Vector2(3.0, 0.0)
-		acc.size     = Vector2(TAB_W - 6.0, 3.0)
+		acc.size     = Vector2(tab_w - 6.0, 3.0)
 		acc.color    = Color(tcol.r, tcol.g, tcol.b, 0.0)
 		acc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		btn.add_child(acc)
 		_tab_accents[tid] = acc
 		btn.pressed.connect(func(): _on_tab(tid))
-		x += TAB_W + GAP
+		x += tab_w + float(GAP)
 
-	x += PAD; _divider(bar, x, yc); x += GAP + 5.0
+	var x2 := float(PAD)
 
 	# ── Botones de velocidad ──
 	for sd: Array in SPEED_DEFS:
 		var si   := sd[0] as int
 		var sico := sd[1] as String
 		var scol := sd[2] as Color
-		var btn  := _make_icon_btn(sico, "", scol, 46.0, float(BTN))
-		btn.position = Vector2(x, yc)
+		var btn  := _make_icon_btn(sico, "", scol, 42.0, 42.0)
+		btn.position = Vector2(x2, y_controls)
 		bar.add_child(btn)
 		_speed_btns[si] = btn
 		btn.pressed.connect(func(): _on_speed(si))
-		x += 46.0 + GAP
-
-	x += PAD; _divider(bar, x, yc); x += GAP + 5.0
+		x2 += 42.0 + float(GAP)
 
 	# ── Botón regenerar ──
-	var regen := _make_icon_btn("regen", "Nuevo", C_ACC, 62.0, float(BTN))
-	regen.position = Vector2(x, yc)
+	var regen := _make_icon_btn("regen", "Nuevo", C_ACC, 92.0, 42.0)
+	regen.position = Vector2(x2 + 8.0, y_controls)
 	bar.add_child(regen)
 	regen.pressed.connect(func(): regenerate_requested.emit())
-	x += 66.0 + GAP + PAD
+	x2 += 108.0
 
 	# ── Consejo / crónica ──
 	_chronicle_prompt_label = Label.new()
-	_chronicle_prompt_label.position = Vector2(float(PAD), -34.0)
+	_chronicle_prompt_label.position = Vector2(float(PAD), 124.0)
 	_chronicle_prompt_label.size = Vector2(SIDEBAR_W - float(PAD * 2), 18.0)
-	_chronicle_prompt_label.text = "Consejo:"
+	_chronicle_prompt_label.text = "Crónicas del Reino:"
 	_chronicle_prompt_label.add_theme_font_size_override("font_size", 11)
 	_chronicle_prompt_label.add_theme_color_override("font_color", C_ACC)
 	bar.add_child(_chronicle_prompt_label)
 
 	for i in range(3):
-		var reply_btn := _make_text_btn(Color(0.80, 0.65, 0.22), 90.0, 28.0)
-		reply_btn.position = Vector2(float(PAD) + i * 136.0, -2.0)
-		reply_btn.size = Vector2(132.0, 22.0)
+		var reply_btn := _make_text_btn(Color(0.80, 0.65, 0.22), 132.0, 24.0)
+		reply_btn.position = Vector2(float(PAD) + i * 136.0, 144.0)
 		reply_btn.visible = false
 		var oi := i
 		reply_btn.pressed.connect(func(): _on_chronicle_reply_pressed(oi))
@@ -276,33 +275,38 @@ func _build_terrain_content() -> void:
 	_terrain_content.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tool_panel.add_child(_terrain_content)
 
-	var btn_y := float(PAD) + 14.0
-	var x     := float(PAD)
+	var content_w := SIDEBAR_W - float(PAD * 2)
+	var btn_y := float(PAD) + 16.0
+	var x0 := float(PAD)
+	var cols := 4
+	var cell_w := content_w / float(cols)
+	var btn_size := 46.0
 
 	# Encabezado de sección
-	_section_label(_terrain_content, "PINTAR BIOMA", x, float(PAD) - 2.0)
-	x += 90.0
+	_section_label(_terrain_content, "CARTOGRAFÍA DEL REINO", x0, float(PAD) - 2.0)
 
 	for i in BIOMES.size():
-		var btn := _make_icon_btn(BIOME_ICONS[i], BIOME_LABELS[i], BIOME_COLORS[i], float(BTN), float(BTN))
-		btn.position = Vector2(x, btn_y)
+		var col := i % cols
+		var row := i / cols
+		var btn := _make_icon_btn(BIOME_ICONS[i], BIOME_LABELS[i], BIOME_COLORS[i], btn_size, btn_size)
+		btn.position = Vector2(x0 + float(col) * cell_w + (cell_w - btn_size) * 0.5, btn_y + float(row) * (btn_size + 8.0))
 		_terrain_content.add_child(btn)
 		_biome_btns.append(btn)
 		var ci := i
 		btn.pressed.connect(func(): _on_biome(ci))
-		x += float(BTN) + GAP
 
 	# Separador horizontal
 	var sep := ColorRect.new()
-	sep.position = Vector2(0.0, btn_y + float(BTN) + 4.0)
-	sep.size     = Vector2(1200.0, 1.0)
+	sep.position = Vector2(0.0, btn_y + btn_size * 2.0 + 14.0)
+	sep.size     = Vector2(SIDEBAR_W, 1.0)
 	sep.color    = C_BORDER
 	_terrain_content.add_child(sep)
 
 	# Info strip: icono walkable + descripción del bioma seleccionado
 	_biome_info_lbl = Label.new()
-	_biome_info_lbl.position = Vector2(float(PAD), btn_y + float(BTN) + 8.0)
-	_biome_info_lbl.size     = Vector2(900.0, 18.0)
+	_biome_info_lbl.position = Vector2(float(PAD), btn_y + btn_size * 2.0 + 20.0)
+	_biome_info_lbl.size     = Vector2(content_w, 48.0)
+	_biome_info_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_biome_info_lbl.add_theme_font_size_override("font_size", 11)
 	_biome_info_lbl.add_theme_color_override("font_color", C_TEXT)
 	_terrain_content.add_child(_biome_info_lbl)
@@ -316,35 +320,39 @@ func _build_entity_content() -> void:
 	_entity_content.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tool_panel.add_child(_entity_content)
 
-	var btn_y := float(PAD) + 14.0
-	var x     := float(PAD)
+	var content_w := SIDEBAR_W - float(PAD * 2)
+	var btn_y := float(PAD) + 16.0
+	var x0 := float(PAD)
+	var cols := 2
+	var cell_w := content_w / float(cols)
 
-	_section_label(_entity_content, "INVOCAR ESPECIE", x, float(PAD) - 2.0)
-	x += 110.0
+	_section_label(_entity_content, "CASAS Y CLANES", x0, float(PAD) - 2.0)
 
 	for i in _species_data.size():
 		var sp    := _species_data[i] as Dictionary
 		var sname := sp["name"] as String
 		var scol  := sp["color"] as Color
-		var btn   := _make_species_btn("species_" + sname.to_lower(), sname, scol, 90.0, float(BTN), i)
-		btn.position = Vector2(x, btn_y)
+		var col := i % cols
+		var row := i / cols
+		var btn   := _make_species_btn("species_" + sname.to_lower(), sname, scol, cell_w - 6.0, 58.0, i)
+		btn.position = Vector2(x0 + float(col) * cell_w, btn_y + float(row) * 62.0)
 		_entity_content.add_child(btn)
 		_species_btns.append(btn)
 		var si := i
 		btn.pressed.connect(func(): _on_species(si))
-		x += 94.0 + GAP
 
 	# Separador
 	var sep := ColorRect.new()
-	sep.position = Vector2(0.0, btn_y + float(BTN) + 4.0)
-	sep.size     = Vector2(1200.0, 1.0)
+	sep.position = Vector2(0.0, btn_y + 126.0)
+	sep.size     = Vector2(SIDEBAR_W, 1.0)
 	sep.color    = C_BORDER
 	_entity_content.add_child(sep)
 
 	# Info strip
 	_species_info_lbl = Label.new()
-	_species_info_lbl.position = Vector2(float(PAD), btn_y + float(BTN) + 8.0)
-	_species_info_lbl.size     = Vector2(900.0, 18.0)
+	_species_info_lbl.position = Vector2(float(PAD), btn_y + 132.0)
+	_species_info_lbl.size     = Vector2(content_w, 70.0)
+	_species_info_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_species_info_lbl.add_theme_font_size_override("font_size", 11)
 	_species_info_lbl.add_theme_color_override("font_color", C_TEXT)
 	_entity_content.add_child(_species_info_lbl)
@@ -358,11 +366,12 @@ func _build_world_content() -> void:
 	_world_content.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tool_panel.add_child(_world_content)
 
-	var btn_y := float(PAD) + 14.0
-	var x     := float(PAD)
+	var content_w := SIDEBAR_W - float(PAD * 2)
+	var btn_y := float(PAD) + 16.0
+	var x0 := float(PAD)
+	var btn_w := (content_w - 2.0 * float(GAP)) / 3.0
 
-	_section_label(_world_content, "TIPO DE MAPA", x, float(PAD) - 2.0)
-	x += 90.0
+	_section_label(_world_content, "ATLAS DEL REINO", x0, float(PAD) - 2.0)
 
 	var maps: Array[Array] = [
 		[0, "map_random",    "Archipiélago", Color(0.58, 0.55, 0.90)],
@@ -379,21 +388,20 @@ func _build_world_content() -> void:
 		var ico := md[1] as String
 		var lbl := md[2] as String
 		var col := md[3] as Color
-		var btn := _make_icon_btn(ico, lbl, col, 110.0, float(BTN))
-		btn.position = Vector2(x, btn_y)
+		var btn := _make_icon_btn(ico, lbl, col, btn_w, 48.0)
+		btn.position = Vector2(x0 + float(mi) * (btn_w + float(GAP)), btn_y)
 		_world_content.add_child(btn)
 		_map_btns[mi] = btn
 		var mii := mi
 		var desc_lbl := Label.new()
 		desc_lbl.text = map_descs[mi]
-		desc_lbl.position = Vector2(x, btn_y + float(BTN) + 6.0)
-		desc_lbl.size = Vector2(108.0, 28.0)
+		desc_lbl.position = Vector2(x0 + float(mi) * (btn_w + float(GAP)), btn_y + 54.0)
+		desc_lbl.size = Vector2(btn_w, 44.0)
 		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 		desc_lbl.add_theme_font_size_override("font_size", 9)
 		desc_lbl.add_theme_color_override("font_color", C_MUTED)
 		_world_content.add_child(desc_lbl)
 		btn.pressed.connect(func(): _on_map(mii))
-		x += 114.0 + GAP
 
 	_refresh_map_highlights()
 
@@ -403,32 +411,37 @@ func _build_power_content() -> void:
 	_power_content.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tool_panel.add_child(_power_content)
 
-	var btn_y := float(PAD) + 14.0
-	var x     := float(PAD)
+	var content_w := SIDEBAR_W - float(PAD * 2)
+	var btn_y := float(PAD) + 16.0
+	var x0 := float(PAD)
+	var cols := 3
+	var cell_w := content_w / float(cols)
+	var btn_size := 50.0
 
-	_section_label(_power_content, "USAR PODER DIVINO", x, float(PAD) - 2.0)
-	x += 120.0
+	_section_label(_power_content, "DECRETOS DIVINOS", x0, float(PAD) - 2.0)
 
 	for i in POWERS.size():
-		var btn := _make_icon_btn(POWER_ICONS[i], POWER_LABELS[i], POWER_COLORS[i], float(BTN), float(BTN))
-		btn.position = Vector2(x, btn_y)
+		var col := i % cols
+		var row := i / cols
+		var btn := _make_icon_btn(POWER_ICONS[i], POWER_LABELS[i], POWER_COLORS[i], btn_size, btn_size)
+		btn.position = Vector2(x0 + float(col) * cell_w + (cell_w - btn_size) * 0.5, btn_y + float(row) * (btn_size + 10.0))
 		_power_content.add_child(btn)
 		_power_btns.append(btn)
 		var pi := i
 		btn.pressed.connect(func(): _on_power(pi))
-		x += float(BTN) + GAP
 
 	# Separador
 	var sep := ColorRect.new()
-	sep.position = Vector2(0.0, btn_y + float(BTN) + 4.0)
-	sep.size     = Vector2(1200.0, 1.0)
+	sep.position = Vector2(0.0, btn_y + btn_size * 2.0 + 16.0)
+	sep.size     = Vector2(SIDEBAR_W, 1.0)
 	sep.color    = C_BORDER
 	_power_content.add_child(sep)
 
 	# Info strip
 	_power_info_lbl = Label.new()
-	_power_info_lbl.position = Vector2(float(PAD), btn_y + float(BTN) + 8.0)
-	_power_info_lbl.size     = Vector2(900.0, 18.0)
+	_power_info_lbl.position = Vector2(float(PAD), btn_y + btn_size * 2.0 + 20.0)
+	_power_info_lbl.size     = Vector2(content_w, 58.0)
+	_power_info_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_power_info_lbl.add_theme_font_size_override("font_size", 11)
 	_power_info_lbl.add_theme_color_override("font_color", C_TEXT)
 	_power_content.add_child(_power_info_lbl)
