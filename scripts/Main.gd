@@ -108,6 +108,9 @@ var camera: Camera2D
 var world_effects = WorldEffectsScript.new()
 var _fire_cells: Dictionary = world_effects.fire_cells
 var _effects: Array[Dictionary] = world_effects.effects
+var _main_menu_layer: CanvasLayer
+var _main_menu_panel: Panel
+var _game_started := false
 
 func _ready() -> void:
 	rng.randomize()
@@ -142,8 +145,12 @@ func _ready() -> void:
 	ui.power_selected.connect(func(_idx): pass)
 	ui.chronicle_reply_submitted.connect(_on_chronicle_reply_submitted)
 	_regenerate_world()
+	_show_main_menu()
 
 func _process(delta: float) -> void:
+	if not _game_started:
+		_update_minimap_cam_rect()
+		return
 	var speed := TIME_SPEEDS[current_speed_idx]
 	if speed == 0.0:
 		return
@@ -191,6 +198,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_N and event.ctrl_pressed:
 			_regenerate_world()
+			return
+		if event.keycode == KEY_ESCAPE:
+			if _game_started:
+				_show_main_menu(true)
+			else:
+				_start_game_from_menu(false)
 			return
 
 	if event is InputEventMouseButton:
@@ -383,6 +396,98 @@ func _restore_fire_cells(data: Array) -> void:
 			var d := entry as Dictionary
 			var cell := Vector2i(d.get("x", 0) as int, d.get("y", 0) as int)
 			world_effects.fire_cells[cell] = d.get("age", 0) as int
+
+func _show_main_menu(paused_menu: bool = false) -> void:
+	if _main_menu_layer == null:
+		_main_menu_layer = CanvasLayer.new()
+		_main_menu_layer.layer = 30
+		add_child(_main_menu_layer)
+	if _main_menu_panel != null:
+		_main_menu_panel.queue_free()
+
+	_main_menu_panel = Panel.new()
+	_main_menu_panel.anchor_left = 0.5
+	_main_menu_panel.anchor_top = 0.5
+	_main_menu_panel.anchor_right = 0.5
+	_main_menu_panel.anchor_bottom = 0.5
+	_main_menu_panel.offset_left = -220
+	_main_menu_panel.offset_top = -160
+	_main_menu_panel.offset_right = 220
+	_main_menu_panel.offset_bottom = 160
+	_main_menu_layer.add_child(_main_menu_panel)
+
+	var vb := VBoxContainer.new()
+	vb.anchor_left = 0.0
+	vb.anchor_top = 0.0
+	vb.anchor_right = 1.0
+	vb.anchor_bottom = 1.0
+	vb.offset_left = 16
+	vb.offset_top = 16
+	vb.offset_right = -16
+	vb.offset_bottom = -16
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 10)
+	_main_menu_panel.add_child(vb)
+
+	var title := Label.new()
+	title.text = "CIVILIZATIO"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 30)
+	vb.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "Simulación viva de civilizaciones"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 14)
+	vb.add_child(subtitle)
+
+	var btn_new := Button.new()
+	btn_new.text = "Nueva partida"
+	btn_new.custom_minimum_size = Vector2(0, 42)
+	btn_new.pressed.connect(func():
+		_regenerate_world()
+		_start_game_from_menu(false)
+	)
+	vb.add_child(btn_new)
+
+	var btn_continue := Button.new()
+	btn_continue.text = "Continuar"
+	btn_continue.custom_minimum_size = Vector2(0, 42)
+	btn_continue.disabled = not paused_menu
+	btn_continue.pressed.connect(func(): _start_game_from_menu(false))
+	vb.add_child(btn_continue)
+
+	var btn_load := Button.new()
+	btn_load.text = "Cargar partida"
+	btn_load.custom_minimum_size = Vector2(0, 42)
+	btn_load.pressed.connect(func():
+		if _load_game():
+			_start_game_from_menu(false)
+	)
+	vb.add_child(btn_load)
+
+	var btn_exit := Button.new()
+	btn_exit.text = "Salir"
+	btn_exit.custom_minimum_size = Vector2(0, 42)
+	btn_exit.pressed.connect(func(): get_tree().quit())
+	vb.add_child(btn_exit)
+
+	_game_started = false
+	current_speed_idx = 0
+	if ui != null:
+		ui.visible = false
+
+func _start_game_from_menu(keep_paused: bool) -> void:
+	_game_started = true
+	if _main_menu_panel != null:
+		_main_menu_panel.queue_free()
+		_main_menu_panel = null
+	if ui != null:
+		ui.visible = true
+	if not keep_paused and current_speed_idx == 0:
+		current_speed_idx = 1
+		if ui != null:
+			ui.set_speed_idx(current_speed_idx)
 
 func _save_game() -> bool:
 	var save_data := {
