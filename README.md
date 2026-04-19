@@ -58,3 +58,7 @@ En el panel lateral podés ajustar:
 - Es una base simple para iterar rápido; la evolución actual es intencionalmente básica.
 - El preset “Tipo Tierra” es aproximado (no usa datos reales GIS).
 - Próximo paso sugerido: cargar heightmaps reales de Tierra/continentes para mapas más fieles.
+
+## Troubleshooting Git
+
+Si al ejecutar `git pull` aparece `MERGE_HEAD exists`, revisá `docs/TROUBLESHOOTING_GIT.md` para pasos de resolución/cancelación de merge incompleto.

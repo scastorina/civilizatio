@@ -332,17 +332,17 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 
 func _serialize_human(human: Human) -> Dictionary:
 	return {
-		"x": human.grid_position.x,
-		"y": human.grid_position.y,
-		"species": human.species_name,
-		"evolution_score": human.evolution_score,
-		"age_ticks": human.age_ticks,
-		"battles_won": human.battles_won,
-		"is_hero": human.is_hero,
-		"hero_name": human.hero_name,
-		"infected": human.infected,
-		"on_fire": human.on_fire,
-		"religion": human.religion,
+		"x": human.grid_position.x as int,
+		"y": human.grid_position.y as int,
+		"species": human.species_name as String,
+		"evolution_score": human.evolution_score as float,
+		"age_ticks": human.age_ticks as int,
+		"battles_won": human.battles_won as int,
+		"is_hero": human.is_hero as bool,
+		"hero_name": human.hero_name as String,
+		"infected": human.infected as bool,
+		"on_fire": human.on_fire as bool,
+		"religion": human.religion as String,
 	}
 
 func _restore_human(state: Dictionary) -> void:
@@ -354,7 +354,9 @@ func _restore_human(state: Dictionary) -> void:
 	if not world_grid.is_in_bounds(cell):
 		return
 	_spawn_human_at(cell, species)
-	var human := humans.back()
+	var human: Human = humans.back() as Human
+	if human == null:
+		return
 	human.evolution_score = state.get("evolution_score", 0.0) as float
 	human.age_ticks = state.get("age_ticks", 0) as int
 	human.battles_won = state.get("battles_won", 0) as int
@@ -434,7 +436,7 @@ func _load_game() -> bool:
 		return false
 	var raw_text := file.get_as_text()
 	file.close()
-	var parsed = JSON.parse_string(raw_text)
+	var parsed: Variant = JSON.parse_string(raw_text)
 	if not (parsed is Dictionary):
 		_log_event("Año %d: Savegame inválido" % world_year, "")
 		return false
