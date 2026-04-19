@@ -446,6 +446,12 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 	subtitle.add_theme_font_size_override("font_size", 14)
 	vb.add_child(subtitle)
 
+	var crest := Label.new()
+	crest.text = "⚔  🏰  🛡   Pergamino del Consejo Real   🛡  🏰  ⚔"
+	crest.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crest.add_theme_font_size_override("font_size", 12)
+	vb.add_child(crest)
+
 	if not paused_menu:
 		var map_label := Label.new()
 		map_label.text = "Tipo de mundo"
@@ -492,6 +498,12 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 				_start_game_from_menu(false)
 		)
 		vb.add_child(btn_load_initial)
+
+		var hint_initial := Label.new()
+		hint_initial.text = "Atajos: ESC menú · F5 guardar · F9 cargar"
+		hint_initial.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hint_initial.add_theme_font_size_override("font_size", 11)
+		vb.add_child(hint_initial)
 	else:
 		_speed_before_pause = maxi(current_speed_idx, 1)
 		var year_label := Label.new()
@@ -530,6 +542,12 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 			_start_game_from_menu(false)
 		)
 		vb.add_child(btn_new_pause)
+
+		var hint_pause := Label.new()
+		hint_pause.text = "Atajos: F5 guardar · F9 cargar"
+		hint_pause.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hint_pause.add_theme_font_size_override("font_size", 11)
+		vb.add_child(hint_pause)
 
 	var btn_exit := Button.new()
 	btn_exit.text = "Salir del reino"
@@ -909,6 +927,7 @@ func _update_chronicle_advice() -> void:
 func _on_chronicle_reply_submitted(text: String) -> void:
 	if _active_advice.is_empty():
 		_log_event("Ano %d: Llegaron palabras tardias al salon del consejo" % world_year, "", "El mensaje no encontro una consulta abierta, pero los escribas lo archivaron igualmente.")
+		_refresh_hud()
 		return
 	var answer := text.to_lower().strip_edges()
 	var topic := _active_advice.get("topic", "") as String
@@ -973,6 +992,7 @@ func _on_chronicle_reply_submitted(text: String) -> void:
 	if not resolved:
 		_log_event("Ano %d: El consejo recibe una respuesta ambigua: '%s'" % [world_year, text], species, "Los asesores toman nota, pero la orden no cambia el rumbo de inmediato.")
 	_active_advice.clear()
+	_refresh_hud()
 
 func _record_battle_marker(from_cell: Vector2i, to_cell: Vector2i, attacker: String, defender: String, success: bool, fort_level: int) -> void:
 	_battle_markers.append({
@@ -3046,6 +3066,7 @@ func _refresh_hud() -> void:
 	hud.war_active = not _war_pairs.is_empty()
 	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year, advisory_prompt, not _active_advice.is_empty())
 	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty(), advisory_options)
+	ui.set_world_feed(stats_lines, _chronicle, world_year)
 
 	# Update cluster caches (expensive operations, amortised once per tick)
 	_settlement_cluster_cache = _find_settlement_clusters()
