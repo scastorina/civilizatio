@@ -159,10 +159,10 @@ func _draw_vignette(vp: Vector2) -> void:
 	var cy := vp.y * 0.5
 	var dark  := Color(0.0, 0.0, 0.0, 0.45)
 	var clear := Color(0.0, 0.0, 0.0, 0.0)
-	draw_colored_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(0.0, 0.0), Vector2(vp.x, 0.0)]),    PackedColorArray([clear, dark, dark]))
-	draw_colored_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(vp.x, 0.0), Vector2(vp.x, vp.y)]), PackedColorArray([clear, dark, dark]))
-	draw_colored_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(vp.x, vp.y), Vector2(0.0, vp.y)]), PackedColorArray([clear, dark, dark]))
-	draw_colored_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(0.0, vp.y), Vector2(0.0, 0.0)]),    PackedColorArray([clear, dark, dark]))
+	draw_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(0.0, 0.0), Vector2(vp.x, 0.0)]),    PackedColorArray([clear, dark, dark]))
+	draw_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(vp.x, 0.0), Vector2(vp.x, vp.y)]), PackedColorArray([clear, dark, dark]))
+	draw_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(vp.x, vp.y), Vector2(0.0, vp.y)]), PackedColorArray([clear, dark, dark]))
+	draw_polygon(PackedVector2Array([Vector2(cx, cy), Vector2(0.0, vp.y), Vector2(0.0, 0.0)]),    PackedColorArray([clear, dark, dark]))
 
 
 func _draw_war_flash(vp: Vector2) -> void:
