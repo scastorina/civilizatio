@@ -23,6 +23,10 @@ Prototipo simple en **Godot 4** para iterar una simulación de mapa + especies.
 ## Controles
 
 - `Enter`: regenera el mundo con la configuración seleccionada.
+- `Ctrl + N`: inicia una nueva partida (regenera mundo).
+- `F5`: guarda la partida actual en `user://savegame.json`.
+- `F9`: carga la última partida guardada.
+- `Esc`: abre/cierra el menú principal durante la partida.
 - `E`: activa/desactiva el editor de terreno.
 - `1..5`: selecciona bioma para pintar.
   - `1`: water
@@ -55,3 +59,7 @@ En el panel lateral podés ajustar:
 - Es una base simple para iterar rápido; la evolución actual es intencionalmente básica.
 - El preset “Tipo Tierra” es aproximado (no usa datos reales GIS).
 - Próximo paso sugerido: cargar heightmaps reales de Tierra/continentes para mapas más fieles.
+
+## Troubleshooting Git
+
+Si al ejecutar `git pull` aparece `MERGE_HEAD exists`, revisá `docs/TROUBLESHOOTING_GIT.md` para pasos de resolución/cancelación de merge incompleto.
