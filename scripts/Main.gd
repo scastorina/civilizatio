@@ -6,7 +6,7 @@ const WORLD_HEIGHT := 54
 const INITIAL_HUMANS := 20
 const MAX_HUMANS := 200
 const MOVE_TICK_SECONDS := 0.35
-const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain", "snow", "jungle"]
+const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain", "snow", "jungle", "swamp"]
 const MAP_PRESETS: Array[String] = ["random", "earth_like", "continent"]
 const TIME_SPEEDS: Array[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
 const SPECIES_LIBRARY: Array[Dictionary] = [
@@ -2702,6 +2702,7 @@ func _biome_color(biome: String) -> Color:
 		"mountain": return Color(0.541, 0.541, 0.604)   # #8a8a9a
 		"snow":     return Color(0.910, 0.941, 0.973)   # #e8f0f8
 		"jungle":   return Color(0.102, 0.420, 0.125)   # #1a6b20
+		"swamp":    return Color(0.282, 0.392, 0.196)   # #486432
 		_:          return Color.WHITE
 
 func _biome_dark_color(biome: String) -> Color:
@@ -2714,6 +2715,7 @@ func _biome_dark_color(biome: String) -> Color:
 		"mountain": return Color(0.416, 0.416, 0.478)   # #6a6a7a
 		"snow":     return Color(0.753, 0.800, 0.847)   # #c0ccd8
 		"jungle":   return Color(0.059, 0.290, 0.078)   # #0f4a14
+		"swamp":    return Color(0.196, 0.275, 0.118)   # #324718
 		_:          return Color.DARK_GRAY
 
 # ── Per-tile biome detail decorations ─────────────────────────────────────────
@@ -2789,6 +2791,19 @@ func _draw_biome_detail(x: int, y: int, biome: String) -> void:
 			draw_circle(Vector2(px + ts*(0.22+hv*0.56),  py + ts*(0.38+hv2*0.38)), ts*0.44, jc1)
 			draw_circle(Vector2(px + ts*(0.44+hv3*0.38), py + ts*(0.28+hv4*0.28)), ts*0.36, jc2)
 			draw_circle(Vector2(px + ts*(0.18+hv2*0.42), py + ts*(0.20+hv3*0.26)), ts*0.28, jc3)
+		"swamp":
+			# Charco + juncos
+			var wc := Color(0.18, 0.28, 0.12, 0.65)
+			draw_circle(Vector2(px + ts*(0.22+hv*0.40), py + ts*(0.45+hv2*0.30)), ts*0.32, wc)
+			# Juncos (líneas verticales)
+			var rc := Color(0.22, 0.45, 0.12, 0.80)
+			for i in 3:
+				var ph := float(((x + i*97)*7919 + y*2053) & 0xFF) / 255.0
+				var ph2 := float((x*3571 + (y+i*61)*8191) & 0xFF) / 255.0
+				var rx := px + ts*(0.12 + ph*0.76)
+				var ry := py + ts*(0.50 + ph2*0.20)
+				draw_line(Vector2(rx, ry), Vector2(rx + ts*0.04, ry - ts*0.42), rc, 1.5)
+				draw_circle(Vector2(rx + ts*0.04, ry - ts*0.44), ts*0.05, rc.darkened(0.20))
 
 # ── Minimap ──────────────────────────────────────────────────────────────────
 

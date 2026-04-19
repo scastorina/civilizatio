@@ -140,6 +140,18 @@ func _draw() -> void:
 				Vector2(cx+s*0.76, cy+s*0.62),
 				ic.darkened(0.30), 1.5)
 
+		"biome_swamp":
+			# Charco + dos juncos
+			draw_circle(Vector2(cx, cy+s*0.30), s*0.50, ic.darkened(0.40))
+			draw_circle(Vector2(cx-s*0.26, cy+s*0.20), s*0.28, ic.darkened(0.22))
+			# Juncos
+			for i in 2:
+				var ox := cx + float(i)*s*0.60 - s*0.30
+				draw_line(Vector2(ox, cy+s*0.46), Vector2(ox+s*0.06, cy-s*0.56), ic.lightened(0.10), 2.0)
+				draw_circle(Vector2(ox+s*0.07, cy-s*0.60), s*0.09, ic.darkened(0.15))
+			# Reflejo de agua
+			draw_arc(Vector2(cx-s*0.14, cy+s*0.32), s*0.22, PI, TAU, 8, Color(0.4,0.7,0.4,0.55), 1.2)
+
 		"biome_snow":
 			# Snowflake: 3 crossing lines + tip branches
 			for i in 3:
