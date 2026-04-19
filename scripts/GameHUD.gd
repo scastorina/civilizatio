@@ -64,55 +64,7 @@ func update_minimap_camera(cam_rect: Rect2) -> void:
 
 func _draw() -> void:
 	_hud_tick += 1
-	var font := ThemeDB.fallback_font
 	var vp := get_viewport_rect().size
-
-	# ── Stats panel (top-left) ──────────────────────────────────────────────────
-	var sw := 340.0
-	var sh := 10.0 + stats_lines.size() * 16.0 + 6.0
-	draw_rect(Rect2(0, 0, sw, sh), C_SURF)
-	draw_rect(Rect2(0, sh - 1, sw, 1), C_BORDER)   # bottom accent line
-	var sy := 15.0
-	for i in stats_lines.size():
-		var c := stats_colors[i] if i < stats_colors.size() else C_TEXT
-		draw_string(font, Vector2(8, sy), stats_lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, c)
-		sy += 16.0
-
-	# ── Chronicle panel (top-right) ─────────────────────────────────────────────
-	var cp_w := 280.0
-	var cx0 := vp.x - cp_w - 4.0
-	var vis := mini(chronicle.size(), 18)
-	var cp_h := 22.0 + vis * 13.0 + 4.0
-	draw_rect(Rect2(cx0 - 4, 0, cp_w + 8, cp_h), C_SURF)
-	draw_rect(Rect2(cx0 - 4, cp_h - 1, cp_w + 8, 1), C_BORDER)
-	draw_string(font, Vector2(cx0, 14), "CRÓNICA  Año %d" % world_year, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, C_ACC)
-	var start_i := maxi(0, chronicle.size() - 18)
-	var cry := 27.0
-	for i in range(start_i, chronicle.size()):
-		var ec := chronicle_colors[i] if i < chronicle_colors.size() else C_TEXT
-		draw_string(font, Vector2(cx0, cry), chronicle[i], HORIZONTAL_ALIGNMENT_LEFT, int(cp_w), 9, ec.lightened(0.15))
-		cry += 13.0
-
-	if advisory_text != "":
-		var ay := cp_h + 4.0
-		var ah := 32.0
-		draw_rect(Rect2(cx0 - 4, ay, cp_w + 8, ah), C_SURF2)
-		draw_rect(Rect2(cx0 - 4, ay, 2, ah), C_ACC)  # left accent stripe
-		draw_string(font, Vector2(cx0 + 4, ay + 12.0), "Consejo del consejo" if advisory_waiting else "Consejo archivado", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, C_ACC)
-		draw_string(font, Vector2(cx0 + 4, ay + 24.0), advisory_text, HORIZONTAL_ALIGNMENT_LEFT, int(cp_w), 9, C_TEXT)
-		cp_h += ah + 4.0
-
-	if not hero_lines.is_empty():
-		var hy := cp_h + 4.0
-		var hp_h := 18.0 + hero_lines.size() * 13.0 + 4.0
-		draw_rect(Rect2(cx0 - 4, hy, cp_w + 8, hp_h), C_SURF2)
-		draw_rect(Rect2(cx0 - 4, hy, 2, hp_h), Color(0.784, 0.706, 0.125))  # gold left stripe
-		draw_string(font, Vector2(cx0 + 4, hy + 13), "HÉROES VIVOS", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.784, 0.706, 0.125))
-		var hcy := hy + 26.0
-		for i in hero_lines.size():
-			var hc := hero_colors[i] if i < hero_colors.size() else C_ACC
-			draw_string(font, Vector2(cx0 + 4, hcy), hero_lines[i], HORIZONTAL_ALIGNMENT_LEFT, int(cp_w), 9, hc.lightened(0.25))
-			hcy += 13.0
 
 	# ── Minimap (bottom-left, above toolbar) ────────────────────────────────────
 	if _minimap_tex == null or _minimap_w == 0:
@@ -125,6 +77,7 @@ func _draw() -> void:
 	var mm_h := float(_minimap_h) * MM_SCALE
 	var mm_x := 4.0
 	var mm_y := vp.y - TOOLBAR_H - mm_h - 6.0
+	var font := ThemeDB.fallback_font
 
 	# Background + border
 	draw_rect(Rect2(mm_x - 2, mm_y - 14, mm_w + 4, 14), C_SURF)

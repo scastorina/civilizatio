@@ -137,6 +137,12 @@ var _power_info_lbl:   Label = null
 
 var _chronicle_prompt_label:  Label
 var _chronicle_reply_buttons: Array[Button] = []
+var _world_status_lbl: Label = null
+var _world_chronicle_lbl: Label = null
+var _world_controls_lbl: Label = null
+var _world_year := 0
+var _world_status_lines: Array[String] = []
+var _world_chronicle_lines: Array[String] = []
 
 # ── API pública ───────────────────────────────────────────────────────────────
 
@@ -161,6 +167,12 @@ func set_chronicle_prompt(text: String, waiting: bool, options: Array[String] = 
 			btn.text = ""
 			btn.visible = false
 			btn.disabled = true
+
+func set_world_feed(stats: Array[String], chronicle_lines: Array[String], year: int) -> void:
+	_world_status_lines.assign(stats)
+	_world_chronicle_lines.assign(chronicle_lines)
+	_world_year = year
+	_update_world_feed()
 
 func is_reply_input_focused() -> bool:
 	return false
@@ -404,6 +416,36 @@ func _build_world_content() -> void:
 		btn.pressed.connect(func(): _on_map(mii))
 
 	_refresh_map_highlights()
+	var sep := ColorRect.new()
+	sep.position = Vector2(0.0, btn_y + 102.0)
+	sep.size     = Vector2(SIDEBAR_W, 1.0)
+	sep.color    = C_BORDER
+	_world_content.add_child(sep)
+
+	_section_label(_world_content, "RESUMEN DEL REINO", x0, btn_y + 106.0)
+	_world_status_lbl = Label.new()
+	_world_status_lbl.position = Vector2(float(PAD), btn_y + 124.0)
+	_world_status_lbl.size     = Vector2(content_w, 48.0)
+	_world_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_world_status_lbl.add_theme_font_size_override("font_size", 10)
+	_world_status_lbl.add_theme_color_override("font_color", C_TEXT)
+	_world_content.add_child(_world_status_lbl)
+
+	_world_chronicle_lbl = Label.new()
+	_world_chronicle_lbl.position = Vector2(float(PAD), btn_y + 176.0)
+	_world_chronicle_lbl.size     = Vector2(content_w, 58.0)
+	_world_chronicle_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_world_chronicle_lbl.add_theme_font_size_override("font_size", 10)
+	_world_chronicle_lbl.add_theme_color_override("font_color", C_TEXT)
+	_world_content.add_child(_world_chronicle_lbl)
+
+	_world_controls_lbl = Label.new()
+	_world_controls_lbl.position = Vector2(float(PAD), btn_y + 236.0)
+	_world_controls_lbl.size     = Vector2(content_w, 18.0)
+	_world_controls_lbl.add_theme_font_size_override("font_size", 10)
+	_world_controls_lbl.add_theme_color_override("font_color", C_MUTED)
+	_world_content.add_child(_world_controls_lbl)
+	_update_world_feed()
 
 
 func _build_power_content() -> void:
@@ -546,6 +588,31 @@ func _update_power_info() -> void:
 	if i < 0 or i >= POWERS.size():
 		return
 	_power_info_lbl.text = "%s  ·  %s" % [POWER_LABELS[i].to_upper(), POWER_DESCS[i]]
+
+func _update_world_feed() -> void:
+	if _world_status_lbl == null or _world_chronicle_lbl == null or _world_controls_lbl == null:
+		return
+	var visible_stats: Array[String] = []
+	for line in _world_status_lines:
+		if line.begins_with("──"):
+			continue
+		visible_stats.append(line)
+		if visible_stats.size() >= 3:
+			break
+	if visible_stats.is_empty():
+		_world_status_lbl.text = "Año %d\nSin datos del reino todavía." % _world_year
+	else:
+		_world_status_lbl.text = "Año %d\n%s" % [_world_year, "\n".join(visible_stats)]
+
+	var recent: Array[String] = []
+	var start_i := maxi(0, _world_chronicle_lines.size() - 3)
+	for i in range(start_i, _world_chronicle_lines.size()):
+		recent.append("• " + (_world_chronicle_lines[i] as String))
+	if recent.is_empty():
+		_world_chronicle_lbl.text = "Crónicas recientes:\nAún no hay eventos registrados."
+	else:
+		_world_chronicle_lbl.text = "Crónicas recientes:\n%s" % "\n".join(recent)
+	_world_controls_lbl.text = "Guardar F5 · Cargar F9 · Menú ESC"
 
 
 # ── Highlights ────────────────────────────────────────────────────────────────
