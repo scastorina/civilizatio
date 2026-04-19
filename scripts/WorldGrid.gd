@@ -358,3 +358,36 @@ func get_all_walkable_cells() -> Array[Vector2i]:
 			if is_walkable(cell):
 				walkable.append(cell)
 	return walkable
+
+func export_state() -> Dictionary:
+	return {
+		"width": width,
+		"height": height,
+		"tiles": _tiles.duplicate(true),
+		"owners": _owners.duplicate(true),
+		"presence": _presence.duplicate(true),
+		"structures": _structures.duplicate(true),
+		"fortifications": _fortifications.duplicate(true),
+		"improvements": _improvements.duplicate(true),
+	}
+
+func import_state(state: Dictionary) -> bool:
+	var w := state.get("width", width) as int
+	var h := state.get("height", height) as int
+	if w != width or h != height:
+		return false
+	var tiles := state.get("tiles", []) as Array
+	var owners := state.get("owners", []) as Array
+	var presence := state.get("presence", []) as Array
+	var structures := state.get("structures", []) as Array
+	var fortifications := state.get("fortifications", []) as Array
+	var improvements := state.get("improvements", []) as Array
+	if tiles.size() != height or owners.size() != height or presence.size() != height or structures.size() != height or fortifications.size() != height or improvements.size() != height:
+		return false
+	_tiles = tiles.duplicate(true)
+	_owners = owners.duplicate(true)
+	_presence = presence.duplicate(true)
+	_structures = structures.duplicate(true)
+	_fortifications = fortifications.duplicate(true)
+	_improvements = improvements.duplicate(true)
+	return true

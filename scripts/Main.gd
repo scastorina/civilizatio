@@ -3,7 +3,7 @@ extends Node2D
 const TILE_SIZE := 16
 const WORLD_WIDTH := 96
 const WORLD_HEIGHT := 54
-const INITIAL_HUMANS := 20
+const INITIAL_HUMANS_DEFAULT := 20
 const MAX_HUMANS := 200
 const MOVE_TICK_SECONDS := 0.35
 const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain", "snow", "jungle", "swamp"]
@@ -62,6 +62,7 @@ const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
 const FORTIFICATION_NAMES: Array[String] = ["sin defensa", "valla de madera", "muralla de piedra", "bastion de hierro"]
 const RESOURCE_KEYS: Array[String] = ["food", "wood", "stone", "iron"]
+const SAVE_FILE_PATH := "user://savegame.json"
 const SPECIES_RELIGIONS: Dictionary = {
 	"Humanos": "Fe Sagrada",
 	"Elfos":   "Sendero Eterno",
@@ -107,6 +108,14 @@ var camera: Camera2D
 var world_effects = WorldEffectsScript.new()
 var _fire_cells: Dictionary = world_effects.fire_cells
 var _effects: Array[Dictionary] = world_effects.effects
+var _main_menu_layer: CanvasLayer
+var _main_menu_panel: Panel
+var _game_started := false
+var _speed_before_pause := 1
+var initial_population := INITIAL_HUMANS_DEFAULT
+var _menu_map_idx := 0
+var _menu_population_idx := 1
+const MENU_POP_OPTIONS: Array[int] = [12, 20, 40]
 
 func _ready() -> void:
 	rng.randomize()
@@ -141,8 +150,12 @@ func _ready() -> void:
 	ui.power_selected.connect(func(_idx): pass)
 	ui.chronicle_reply_submitted.connect(_on_chronicle_reply_submitted)
 	_regenerate_world()
+	_show_main_menu()
 
 func _process(delta: float) -> void:
+	if not _game_started:
+		_update_minimap_cam_rect()
+		return
 	var speed := TIME_SPEEDS[current_speed_idx]
 	if speed == 0.0:
 		return
@@ -181,6 +194,21 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			_regenerate_world()
+			return
+		if event.keycode == KEY_F5:
+			_save_game()
+			return
+		if event.keycode == KEY_F9:
+			_load_game()
+			return
+		if event.keycode == KEY_N and event.ctrl_pressed:
+			_regenerate_world()
+			return
+		if event.keycode == KEY_ESCAPE:
+			if _game_started:
+				_show_main_menu(true)
+			else:
+				_start_game_from_menu(false)
 			return
 
 	if event is InputEventMouseButton:
@@ -301,7 +329,7 @@ func _spawn_initial_humans() -> void:
 	var walkable := world_grid.get_all_walkable_cells()
 	_shuffle_cells(walkable)
 
-	var count := mini(INITIAL_HUMANS, walkable.size())
+	var count := mini(initial_population, walkable.size())
 	for i in range(count):
 		var species: Dictionary = SPECIES_LIBRARY[i % SPECIES_LIBRARY.size()]
 		_spawn_human_at(walkable[i], species)
@@ -319,6 +347,329 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
 	humans.append(human)
+
+func _serialize_human(human: Human) -> Dictionary:
+	return {
+		"x": human.grid_position.x as int,
+		"y": human.grid_position.y as int,
+		"species": human.species_name as String,
+		"evolution_score": human.evolution_score as float,
+		"age_ticks": human.age_ticks as int,
+		"battles_won": human.battles_won as int,
+		"is_hero": human.is_hero as bool,
+		"hero_name": human.hero_name as String,
+		"infected": human.infected as bool,
+		"on_fire": human.on_fire as bool,
+		"religion": human.religion as String,
+	}
+
+func _restore_human(state: Dictionary) -> void:
+	var species_name := state.get("species", "Humanos") as String
+	var species := _find_species(species_name)
+	if species.is_empty():
+		return
+	var cell := Vector2i(state.get("x", 0) as int, state.get("y", 0) as int)
+	if not world_grid.is_in_bounds(cell):
+		return
+	_spawn_human_at(cell, species)
+	var human: Human = humans.back() as Human
+	if human == null:
+		return
+	human.evolution_score = state.get("evolution_score", 0.0) as float
+	human.age_ticks = state.get("age_ticks", 0) as int
+	human.battles_won = state.get("battles_won", 0) as int
+	human.is_hero = state.get("is_hero", false) as bool
+	human.hero_name = state.get("hero_name", "") as String
+	human.infected = state.get("infected", false) as bool
+	human.on_fire = state.get("on_fire", false) as bool
+	human.religion = state.get("religion", SPECIES_RELIGIONS.get(species_name, "") as String) as String
+
+func _serialize_fire_cells() -> Array:
+	var out: Array = []
+	for cell: Vector2i in world_effects.fire_cells.keys():
+		out.append({
+			"x": cell.x,
+			"y": cell.y,
+			"age": world_effects.fire_cells[cell] as int,
+		})
+	return out
+
+func _restore_fire_cells(data: Array) -> void:
+	world_effects.fire_cells.clear()
+	for entry in data:
+		if entry is Dictionary:
+			var d := entry as Dictionary
+			var cell := Vector2i(d.get("x", 0) as int, d.get("y", 0) as int)
+			world_effects.fire_cells[cell] = d.get("age", 0) as int
+
+func _show_main_menu(paused_menu: bool = false) -> void:
+	if _main_menu_layer == null:
+		_main_menu_layer = CanvasLayer.new()
+		_main_menu_layer.layer = 30
+		add_child(_main_menu_layer)
+	if _main_menu_panel != null:
+		_main_menu_panel.queue_free()
+
+	_main_menu_panel = Panel.new()
+	_main_menu_panel.anchor_left = 0.5
+	_main_menu_panel.anchor_top = 0.5
+	_main_menu_panel.anchor_right = 0.5
+	_main_menu_panel.anchor_bottom = 0.5
+	_main_menu_panel.offset_left = -220
+	_main_menu_panel.offset_top = -160
+	_main_menu_panel.offset_right = 220
+	_main_menu_panel.offset_bottom = 160
+	_main_menu_layer.add_child(_main_menu_panel)
+
+	var vb := VBoxContainer.new()
+	vb.anchor_left = 0.0
+	vb.anchor_top = 0.0
+	vb.anchor_right = 1.0
+	vb.anchor_bottom = 1.0
+	vb.offset_left = 16
+	vb.offset_top = 16
+	vb.offset_right = -16
+	vb.offset_bottom = -16
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 10)
+	_main_menu_panel.add_child(vb)
+
+	var title := Label.new()
+	title.text = "CRÓNICAS DE CIVILIZATIO"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 30)
+	vb.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "Forja reinos, guerras y leyendas en la era medieval"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 14)
+	vb.add_child(subtitle)
+
+	if not paused_menu:
+		var map_label := Label.new()
+		map_label.text = "Tipo de mundo"
+		map_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		vb.add_child(map_label)
+
+		var map_selector := OptionButton.new()
+		map_selector.add_item("Islas del Reino", 0)
+		map_selector.add_item("Mundo Antiguo", 1)
+		map_selector.add_item("Gran Continente", 2)
+		map_selector.selected = clampi(_menu_map_idx, 0, 2)
+		map_selector.item_selected.connect(func(idx: int): _menu_map_idx = idx)
+		vb.add_child(map_selector)
+
+		var pop_label := Label.new()
+		pop_label.text = "Población inicial"
+		pop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		vb.add_child(pop_label)
+
+		var pop_selector := OptionButton.new()
+		pop_selector.add_item("Pequeña · 12", 0)
+		pop_selector.add_item("Media · 20", 1)
+		pop_selector.add_item("Grande · 40", 2)
+		pop_selector.selected = clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)
+		pop_selector.item_selected.connect(func(idx: int): _menu_population_idx = idx)
+		vb.add_child(pop_selector)
+
+		var btn_start := Button.new()
+		btn_start.text = "Iniciar crónica"
+		btn_start.custom_minimum_size = Vector2(0, 42)
+		btn_start.pressed.connect(func():
+			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
+			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
+			_regenerate_world()
+			_start_game_from_menu(false)
+		)
+		vb.add_child(btn_start)
+
+		var btn_load_initial := Button.new()
+		btn_load_initial.text = "Cargar crónica"
+		btn_load_initial.custom_minimum_size = Vector2(0, 42)
+		btn_load_initial.pressed.connect(func():
+			if _load_game():
+				_start_game_from_menu(false)
+		)
+		vb.add_child(btn_load_initial)
+	else:
+		_speed_before_pause = maxi(current_speed_idx, 1)
+		var year_label := Label.new()
+		year_label.text = "Año %d" % world_year
+		year_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(year_label)
+
+		var btn_continue := Button.new()
+		btn_continue.text = "Continuar reino"
+		btn_continue.custom_minimum_size = Vector2(0, 42)
+		btn_continue.pressed.connect(func(): _start_game_from_menu(true))
+		vb.add_child(btn_continue)
+
+		var btn_save := Button.new()
+		btn_save.text = "Guardar crónica"
+		btn_save.custom_minimum_size = Vector2(0, 42)
+		btn_save.pressed.connect(func(): _save_game())
+		vb.add_child(btn_save)
+
+		var btn_load_pause := Button.new()
+		btn_load_pause.text = "Cargar crónica"
+		btn_load_pause.custom_minimum_size = Vector2(0, 42)
+		btn_load_pause.pressed.connect(func():
+			if _load_game():
+				_start_game_from_menu(false)
+		)
+		vb.add_child(btn_load_pause)
+
+		var btn_new_pause := Button.new()
+		btn_new_pause.text = "Nueva crónica"
+		btn_new_pause.custom_minimum_size = Vector2(0, 42)
+		btn_new_pause.pressed.connect(func():
+			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
+			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
+			_regenerate_world()
+			_start_game_from_menu(false)
+		)
+		vb.add_child(btn_new_pause)
+
+	var btn_exit := Button.new()
+	btn_exit.text = "Salir del reino"
+	btn_exit.custom_minimum_size = Vector2(0, 42)
+	btn_exit.pressed.connect(func(): get_tree().quit())
+	vb.add_child(btn_exit)
+
+	_game_started = false
+	current_speed_idx = 0
+	if ui != null:
+		ui.visible = false
+
+func _start_game_from_menu(restore_pause_speed: bool) -> void:
+	_game_started = true
+	if _main_menu_panel != null:
+		_main_menu_panel.queue_free()
+		_main_menu_panel = null
+	if ui != null:
+		ui.visible = true
+	if restore_pause_speed:
+		current_speed_idx = clampi(_speed_before_pause, 1, TIME_SPEEDS.size() - 1)
+	elif current_speed_idx == 0:
+		current_speed_idx = 1
+	if ui != null:
+		ui.set_speed_idx(current_speed_idx)
+
+func _save_game() -> bool:
+	var speed_to_save := current_speed_idx
+	if not _game_started and _speed_before_pause > 0:
+		speed_to_save = _speed_before_pause
+	var save_data := {
+		"version": 1,
+		"world_year": world_year,
+		"current_speed_idx": speed_to_save,
+		"current_map_idx": current_map_idx,
+		"move_tick_accumulator": move_tick_accumulator,
+		"world_grid": world_grid.export_state(),
+		"humans": [],
+		"species_tech": _species_tech.duplicate(true),
+		"species_research": _species_research.duplicate(true),
+		"species_resources": _species_resources.duplicate(true),
+		"species_fleets": _species_fleets.duplicate(true),
+		"species_armies": _species_armies.duplicate(true),
+		"species_pressures": _species_pressures.duplicate(true),
+		"relations": _relations.duplicate(true),
+		"war_pairs": _war_pairs.duplicate(true),
+		"alliance_pairs": _alliance_pairs.duplicate(true),
+		"chronicle": _chronicle.duplicate(true),
+		"chronicle_colors": _chronicle_colors.duplicate(true),
+		"territory_names": _territory_names.duplicate(true),
+		"known_kingdoms": _known_kingdoms.duplicate(true),
+		"species_grievances": _species_grievances.duplicate(true),
+		"deforestation_log": _deforestation_log.duplicate(true),
+		"last_war_tick": _last_war_tick.duplicate(true),
+		"tribute_pending": _tribute_pending.duplicate(true),
+		"last_species_event_era": _last_species_event_era.duplicate(true),
+		"active_advice": _active_advice.duplicate(true),
+		"next_advice_year": _next_advice_year,
+		"fire_cells": _serialize_fire_cells(),
+	}
+	for human: Human in humans:
+		(save_data["humans"] as Array).append(_serialize_human(human))
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.WRITE)
+	if file == null:
+		_log_event("Año %d: Error al guardar partida" % world_year, "")
+		return false
+	file.store_string(JSON.stringify(save_data))
+	file.close()
+	_log_event("Año %d: Partida guardada correctamente" % world_year, "")
+	return true
+
+func _load_game() -> bool:
+	if not FileAccess.file_exists(SAVE_FILE_PATH):
+		_log_event("Año %d: No existe una partida guardada" % world_year, "")
+		return false
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.READ)
+	if file == null:
+		_log_event("Año %d: No se pudo abrir la partida guardada" % world_year, "")
+		return false
+	var raw_text := file.get_as_text()
+	file.close()
+	var parsed: Variant = JSON.parse_string(raw_text)
+	if not (parsed is Dictionary):
+		_log_event("Año %d: Savegame inválido" % world_year, "")
+		return false
+	var data := parsed as Dictionary
+	var grid_data := data.get("world_grid", {}) as Dictionary
+	if not world_grid.import_state(grid_data):
+		_log_event("Año %d: Savegame incompatible con el tamaño del mundo" % world_year, "")
+		return false
+
+	for human in humans:
+		human.queue_free()
+	humans.clear()
+	world_effects.reset()
+	_trade_routes.clear()
+	_battle_markers.clear()
+	_sea_route_cache.clear()
+
+	world_year = data.get("world_year", 0) as int
+	move_tick_accumulator = data.get("move_tick_accumulator", 0.0) as float
+	current_speed_idx = clampi(data.get("current_speed_idx", current_speed_idx) as int, 0, TIME_SPEEDS.size() - 1)
+	current_map_idx = clampi(data.get("current_map_idx", current_map_idx) as int, 0, MAP_PRESETS.size() - 1)
+	if ui != null:
+		ui.set_speed_idx(current_speed_idx)
+
+	_species_tech = (data.get("species_tech", _species_tech) as Dictionary).duplicate(true)
+	_species_research = (data.get("species_research", _species_research) as Dictionary).duplicate(true)
+	_species_resources = (data.get("species_resources", _species_resources) as Dictionary).duplicate(true)
+	_species_fleets = (data.get("species_fleets", _species_fleets) as Dictionary).duplicate(true)
+	_species_armies = (data.get("species_armies", _species_armies) as Dictionary).duplicate(true)
+	_species_pressures = (data.get("species_pressures", _species_pressures) as Dictionary).duplicate(true)
+	_relations = (data.get("relations", _relations) as Dictionary).duplicate(true)
+	_war_pairs = (data.get("war_pairs", _war_pairs) as Dictionary).duplicate(true)
+	_alliance_pairs = (data.get("alliance_pairs", _alliance_pairs) as Dictionary).duplicate(true)
+	_chronicle = (data.get("chronicle", _chronicle) as Array).duplicate(true)
+	_chronicle_colors = (data.get("chronicle_colors", _chronicle_colors) as Array).duplicate(true)
+	_territory_names = (data.get("territory_names", _territory_names) as Dictionary).duplicate(true)
+	_known_kingdoms = (data.get("known_kingdoms", _known_kingdoms) as Dictionary).duplicate(true)
+	_species_grievances = (data.get("species_grievances", _species_grievances) as Dictionary).duplicate(true)
+	_deforestation_log = (data.get("deforestation_log", _deforestation_log) as Dictionary).duplicate(true)
+	_last_war_tick = (data.get("last_war_tick", _last_war_tick) as Dictionary).duplicate(true)
+	_tribute_pending = (data.get("tribute_pending", _tribute_pending) as Dictionary).duplicate(true)
+	_last_species_event_era = (data.get("last_species_event_era", _last_species_event_era) as Dictionary).duplicate(true)
+	_active_advice = (data.get("active_advice", _active_advice) as Dictionary).duplicate(true)
+	_next_advice_year = data.get("next_advice_year", _next_advice_year) as int
+
+	var humans_data := data.get("humans", []) as Array
+	for hdata in humans_data:
+		if hdata is Dictionary:
+			_restore_human(hdata as Dictionary)
+	_restore_fire_cells(data.get("fire_cells", []) as Array)
+
+	_build_and_push_minimap()
+	_settlement_cluster_cache = _find_settlement_clusters()
+	_territory_cluster_cache  = _find_territory_clusters()
+	_refresh_hud()
+	queue_redraw()
+	_log_event("Año %d: Partida cargada correctamente" % world_year, "")
+	return true
 
 func _move_humans() -> void:
 	var occupied := {}
@@ -1196,6 +1547,32 @@ func _dominant_religion(species: String) -> String:
 			best = r
 	return best
 
+func _dominant_religions_for_species(species_list: Array) -> Dictionary:
+	var species_set: Dictionary = {}
+	for sp in species_list:
+		species_set[sp as String] = true
+	var counters: Dictionary = {}
+	for h in humans:
+		if h.religion == "" or not species_set.has(h.species_name):
+			continue
+		if not counters.has(h.species_name):
+			counters[h.species_name] = {}
+		var rel_counts: Dictionary = counters[h.species_name] as Dictionary
+		rel_counts[h.religion] = (rel_counts.get(h.religion, 0) as int) + 1
+	var dominant: Dictionary = {}
+	for sp in species_list:
+		var species := sp as String
+		var rel_counts := counters.get(species, {}) as Dictionary
+		var best_rel := ""
+		var best_n := 0
+		for r: String in rel_counts.keys():
+			var n := rel_counts[r] as int
+			if n > best_n:
+				best_n = n
+				best_rel = r
+		dominant[species] = best_rel
+	return dominant
+
 func _update_religions() -> void:
 	for human in humans:
 		for other in humans:
@@ -1234,6 +1611,16 @@ func _update_diplomacy() -> void:
 	for h in humans:
 		living[h.species_name] = true
 	var sp_list: Array = living.keys()
+	var dominant_religions := _dominant_religions_for_species(sp_list)
+	var cross_trade_pairs: Dictionary = {}
+	for r: Dictionary in _trade_routes:
+		if r.get("mode", "") != "cross":
+			continue
+		var rsa := r.get("species", "") as String
+		var rsb := r.get("partner", "") as String
+		if rsa == "" or rsb == "":
+			continue
+		cross_trade_pairs[_diplomacy_key(rsa, rsb)] = true
 
 	# ── Passive grievance decay (dwarves) ─────────────────────────────────────
 	if world_year % 100 == 0:
@@ -1255,20 +1642,14 @@ func _update_diplomacy() -> void:
 			else:
 				rel -= 0.001
 
-			if _dominant_religion(a) == _dominant_religion(b) and _dominant_religion(a) != "":
+			var dom_a := dominant_religions.get(a, "") as String
+			var dom_b := dominant_religions.get(b, "") as String
+			if dom_a == dom_b and dom_a != "":
 				rel += 0.002
 
 			# ── Human trade diplomacy bonus ────────────────────────────────────
 			# Humans improve relations faster with active cross-species trade
-			var has_cross_trade := false
-			for r: Dictionary in _trade_routes:
-				if r.get("mode", "") == "cross":
-					var rsa := r.get("species", "") as String
-					var rsb := r.get("partner", "") as String
-					if (rsa == a and rsb == b) or (rsa == b and rsb == a):
-						has_cross_trade = true
-						break
-			if has_cross_trade:
+			if cross_trade_pairs.has(key):
 				if a == "Humanos" or b == "Humanos":
 					rel += 0.0015   # humans are better diplomats through trade
 
