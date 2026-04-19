@@ -233,14 +233,16 @@ func _generate_earth_like() -> void:
 				best = maxf(best, inf)
 
 			var biome: String
-			if   best < 0.06:                      biome = "water"
-			elif best < 0.15:                      biome = "sand"   # beach
-			elif lat  > 0.84:                      biome = "mountain"
-			elif lat  > 0.66:                      biome = "forest"
-			elif lat  < 0.14 and n > 0.60:         biome = "sand"   # tropical desert
-			elif best > 0.70 and n > 0.66:         biome = "mountain"
-			elif n    > 0.55 and best > 0.28:      biome = "forest"
-			else:                                  biome = "grass"
+			if   best < 0.06:                              biome = "water"
+			elif best < 0.15:                              biome = "sand"    # beach
+			elif lat  > 0.92:                              biome = "snow"    # polar caps
+			elif lat  > 0.84:                              biome = "mountain"
+			elif lat  > 0.66:                              biome = "forest"
+			elif lat  < 0.08 and best > 0.20:              biome = "jungle"  # equatorial
+			elif lat  < 0.14 and n > 0.60:                 biome = "sand"    # tropical desert
+			elif best > 0.70 and n > 0.66:                 biome = "mountain"
+			elif n    > 0.55 and best > 0.28:              biome = "forest"
+			else:                                          biome = "grass"
 			row.append(biome)
 		_tiles.append(row)
 
@@ -279,11 +281,12 @@ func _generate_continent() -> void:
 				best = maxf(best, ii * 0.65)
 
 			var biome: String
-			if   best < 0.06:               biome = "water"
-			elif best < 0.16:               biome = "sand"
-			elif best > 0.72 and n > 0.65:  biome = "mountain"
-			elif best > 0.42 and n > 0.52:  biome = "forest"
-			else:                           biome = "grass"
+			if   best < 0.06:                        biome = "water"
+			elif best < 0.16:                        biome = "sand"
+			elif best > 0.72 and n > 0.65:           biome = "mountain"
+			elif best > 0.58 and n < 0.32:           biome = "jungle"  # moist interior
+			elif best > 0.42 and n > 0.52:           biome = "forest"
+			else:                                    biome = "grass"
 			row.append(biome)
 		_tiles.append(row)
 
@@ -344,7 +347,7 @@ func is_walkable(cell: Vector2i) -> bool:
 	if not is_in_bounds(cell):
 		return false
 	var biome: String = get_biome(cell)
-	return biome != "water" and biome != "mountain"
+	return biome != "water" and biome != "mountain" and biome != "snow"
 
 func get_all_walkable_cells() -> Array[Vector2i]:
 	var walkable: Array[Vector2i] = []

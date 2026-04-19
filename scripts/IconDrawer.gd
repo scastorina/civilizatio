@@ -140,6 +140,35 @@ func _draw() -> void:
 				Vector2(cx+s*0.76, cy+s*0.62),
 				ic.darkened(0.30), 1.5)
 
+		"biome_snow":
+			# Snowflake: 3 crossing lines + tip branches
+			for i in 3:
+				var ra := deg_to_rad(float(i) * 60.0)
+				draw_line(
+					Vector2(cx + cos(ra)*s*0.80, cy + sin(ra)*s*0.80),
+					Vector2(cx - cos(ra)*s*0.80, cy - sin(ra)*s*0.80),
+					ic, 2.0)
+			for i in 6:
+				var ra := deg_to_rad(float(i) * 60.0)
+				var tx := cx + cos(ra)*s*0.48
+				var ty := cy + sin(ra)*s*0.48
+				for j in 2:
+					var ba := ra + deg_to_rad(55.0 + float(j) * 70.0)
+					draw_line(Vector2(tx, ty),
+						Vector2(tx + cos(ba)*s*0.22, ty + sin(ba)*s*0.22),
+						ic.lightened(0.30), 1.2)
+
+		"biome_jungle":
+			# Dense tropical canopy: three overlapping circles + trunk
+			draw_rect(Rect2(cx-s*0.12, cy+s*0.22, s*0.24, s*0.52), ic.darkened(0.55))
+			draw_circle(Vector2(cx,        cy+s*0.08), s*0.52, ic.darkened(0.22))
+			draw_circle(Vector2(cx-s*0.34, cy-s*0.06), s*0.38, ic)
+			draw_circle(Vector2(cx+s*0.30, cy-s*0.06), s*0.36, ic.lightened(0.08))
+			draw_circle(Vector2(cx,        cy-s*0.28), s*0.28, ic.lightened(0.22))
+			# Vine hanging
+			draw_arc(Vector2(cx-s*0.44, cy+s*0.30), s*0.20, deg_to_rad(0.0), deg_to_rad(180.0), 8,
+				ic.darkened(0.30), 1.2)
+
 		# ── Power buttons ─────────────────────────────────────────────────────
 
 		"power_meteor":

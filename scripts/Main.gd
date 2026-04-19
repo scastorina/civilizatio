@@ -6,7 +6,7 @@ const WORLD_HEIGHT := 54
 const INITIAL_HUMANS := 20
 const MAX_HUMANS := 200
 const MOVE_TICK_SECONDS := 0.35
-const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain"]
+const BIOMES: Array[String] = ["water", "sand", "grass", "forest", "mountain", "snow", "jungle"]
 const MAP_PRESETS: Array[String] = ["random", "earth_like", "continent"]
 const TIME_SPEEDS: Array[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
 const SPECIES_LIBRARY: Array[Dictionary] = [
@@ -2700,6 +2700,8 @@ func _biome_color(biome: String) -> Color:
 		"grass":    return Color(0.353, 0.620, 0.220)   # #5a9e38
 		"forest":   return Color(0.176, 0.431, 0.176)   # #2d6e2d
 		"mountain": return Color(0.541, 0.541, 0.604)   # #8a8a9a
+		"snow":     return Color(0.910, 0.941, 0.973)   # #e8f0f8
+		"jungle":   return Color(0.102, 0.420, 0.125)   # #1a6b20
 		_:          return Color.WHITE
 
 func _biome_dark_color(biome: String) -> Color:
@@ -2710,6 +2712,8 @@ func _biome_dark_color(biome: String) -> Color:
 		"grass":    return Color(0.227, 0.494, 0.094)   # #3a7e18
 		"forest":   return Color(0.114, 0.306, 0.114)   # #1d4e1d
 		"mountain": return Color(0.416, 0.416, 0.478)   # #6a6a7a
+		"snow":     return Color(0.753, 0.800, 0.847)   # #c0ccd8
+		"jungle":   return Color(0.059, 0.290, 0.078)   # #0f4a14
 		_:          return Color.DARK_GRAY
 
 # ── Per-tile biome detail decorations ─────────────────────────────────────────
@@ -2768,6 +2772,23 @@ func _draw_biome_detail(x: int, y: int, biome: String) -> void:
 				Vector2(peak_x - hw*0.24, peak_y + ts*0.20),
 				Vector2(peak_x + hw*0.24, peak_y + ts*0.20),
 			]), Color(0.96, 0.96, 0.98, 0.94))
+		"snow":
+			# Snowflake dots + ice crack lines
+			var sc := Color(1.0, 1.0, 1.0, 0.55)
+			for i in 4:
+				var ph  := float(((x + i*137)*7919 + y*2053) & 0xFF) / 255.0
+				var ph2 := float((x*3571 + (y + i*89)*8191) & 0xFF) / 255.0
+				draw_circle(Vector2(px + ts*(0.10+ph*0.80), py + ts*(0.10+ph2*0.80)), ts*(0.04+ph*0.03), sc)
+			var ic_c := Color(0.60, 0.72, 0.84, 0.30)
+			draw_line(Vector2(px+ts*(0.15+hv*0.28), py+ts*0.18), Vector2(px+ts*(0.52+hv2*0.18), py+ts*0.78), ic_c, 1.0)
+		"jungle":
+			# Dense overlapping canopy circles, darker than forest
+			var jc1 := Color(0.05, 0.28, 0.06, 0.90)
+			var jc2 := Color(0.10, 0.42, 0.12, 0.75)
+			var jc3 := Color(0.18, 0.55, 0.18, 0.55)
+			draw_circle(Vector2(px + ts*(0.22+hv*0.56),  py + ts*(0.38+hv2*0.38)), ts*0.44, jc1)
+			draw_circle(Vector2(px + ts*(0.44+hv3*0.38), py + ts*(0.28+hv4*0.28)), ts*0.36, jc2)
+			draw_circle(Vector2(px + ts*(0.18+hv2*0.42), py + ts*(0.20+hv3*0.26)), ts*0.28, jc3)
 
 # ── Minimap ──────────────────────────────────────────────────────────────────
 

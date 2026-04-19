@@ -20,15 +20,17 @@ const PAD     := 8
 
 # ── Data tables ──────────────────────────────────────────────────────────────
 
-const BIOMES: Array[String]       = ["water",  "sand",   "grass",   "forest",  "mountain"]
-const BIOME_ICONS: Array[String]  = ["biome_water", "biome_sand", "biome_grass", "biome_forest", "biome_mountain"]
-const BIOME_LABELS: Array[String] = ["Agua",   "Arena",  "Hierba",  "Bosque",  "Monte"]
+const BIOMES: Array[String]       = ["water",  "sand",   "grass",   "forest",  "mountain", "snow",     "jungle"]
+const BIOME_ICONS: Array[String]  = ["biome_water", "biome_sand", "biome_grass", "biome_forest", "biome_mountain", "biome_snow", "biome_jungle"]
+const BIOME_LABELS: Array[String] = ["Agua",   "Arena",  "Pradera", "Bosque",  "Monte",    "Nieve",    "Jungla"]
 const BIOME_COLORS: Array[Color]  = [
-	Color(0.12, 0.46, 0.92),   # water   – vivid blue
-	Color(0.90, 0.80, 0.38),   # sand    – warm gold
-	Color(0.20, 0.78, 0.28),   # grass   – bright green
-	Color(0.06, 0.46, 0.14),   # forest  – deep green
-	Color(0.52, 0.50, 0.48),   # mountain– warm slate
+	Color(0.165, 0.373, 0.659),   # water   – #2a5fa8
+	Color(0.831, 0.722, 0.439),   # sand    – #d4b870
+	Color(0.353, 0.620, 0.220),   # grass   – #5a9e38
+	Color(0.176, 0.431, 0.176),   # forest  – #2d6e2d
+	Color(0.541, 0.541, 0.604),   # mountain– #8a8a9a
+	Color(0.753, 0.847, 0.941),   # snow    – #c0d8f0
+	Color(0.102, 0.420, 0.125),   # jungle  – #1a6b20
 ]
 
 const POWERS: Array[String]        = ["meteor",   "lightning", "fire",   "plague", "rain",    "blessing"]
