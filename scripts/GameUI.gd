@@ -379,7 +379,7 @@ func _build_world_content() -> void:
 		desc_lbl.text = map_descs[mi]
 		desc_lbl.position = Vector2(x, btn_y + float(BTN) + 6.0)
 		desc_lbl.size = Vector2(108.0, 28.0)
-		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_NO_CUTOFF
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 		desc_lbl.add_theme_font_size_override("font_size", 9)
 		desc_lbl.add_theme_color_override("font_color", C_MUTED)
 		_world_content.add_child(desc_lbl)
