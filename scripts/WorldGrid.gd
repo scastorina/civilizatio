@@ -52,24 +52,35 @@ func _clear_owners() -> void:
 		_improvements.append(irow)
 
 func get_owner(cell: Vector2i) -> String:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _owners.size():
 		return ""
-	return _owners[cell.y][cell.x]
+	var row: Array = _owners[cell.y]
+	if cell.x >= row.size():
+		return ""
+	return row[cell.x]
 
 func set_owner(cell: Vector2i, species: String) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _owners.size():
 		return
-	if _owners[cell.y][cell.x] != species:
-		_owners[cell.y][cell.x] = species
-		_presence[cell.y][cell.x] = 0
-		_structures[cell.y][cell.x] = ""
-		_fortifications[cell.y][cell.x] = 0
-		_improvements[cell.y][cell.x] = ""
+	var row: Array = _owners[cell.y]
+	if cell.x >= row.size():
+		return
+	if row[cell.x] != species:
+		row[cell.x] = species
+		_owners[cell.y] = row
+		if cell.y < _presence.size() and cell.x < (_presence[cell.y] as Array).size():
+			_presence[cell.y][cell.x] = 0
+		if cell.y < _structures.size() and cell.x < (_structures[cell.y] as Array).size():
+			_structures[cell.y][cell.x] = ""
+		if cell.y < _fortifications.size() and cell.x < (_fortifications[cell.y] as Array).size():
+			_fortifications[cell.y][cell.x] = 0
+		if cell.y < _improvements.size() and cell.x < (_improvements[cell.y] as Array).size():
+			_improvements[cell.y][cell.x] = ""
 
 func tick_presence(cell: Vector2i, species: String) -> void:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _owners.size():
 		return
-	if _owners[cell.y][cell.x] != species:
+	if (_owners[cell.y] as Array)[cell.x] != species:
 		return
 	_presence[cell.y][cell.x] += 1
 	var p: int = _presence[cell.y][cell.x]
@@ -101,9 +112,9 @@ func set_fortification(cell: Vector2i, level: int) -> void:
 	_fortifications[cell.y][cell.x] = max(level, 0)
 
 func update_fortification(cell: Vector2i, species: String, tech_level: int) -> int:
-	if not is_in_bounds(cell):
+	if not is_in_bounds(cell) or cell.y >= _owners.size():
 		return 0
-	if _owners[cell.y][cell.x] != species:
+	if (_owners[cell.y] as Array)[cell.x] != species:
 		return get_fortification(cell)
 	var current := _fortifications[cell.y][cell.x] as int
 	var structure := get_structure(cell)
