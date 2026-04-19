@@ -115,7 +115,7 @@ func is_reply_input_focused() -> bool:
 # ── Build ────────────────────────────────────────────────────────────────────
 
 func _build() -> void:
-	# Tool panel (content area above bar)
+	# Tool panel (content area above bar)  — --surf2 #171e2e
 	_tool_panel = Panel.new()
 	_tool_panel.anchor_left   = 0.0; _tool_panel.anchor_top    = 1.0
 	_tool_panel.anchor_right  = 1.0; _tool_panel.anchor_bottom = 1.0
@@ -123,16 +123,16 @@ func _build() -> void:
 	_tool_panel.offset_bottom = -BAR_H
 	_tool_panel.offset_left   = 0.0
 	_tool_panel.offset_right  = 0.0
-	_style_panel(_tool_panel, Color(0.10, 0.12, 0.16, 0.97), true)
+	_style_panel(_tool_panel, Color(0.090, 0.118, 0.173, 0.97), true)
 	add_child(_tool_panel)
 
-	# Main tab bar
+	# Main tab bar  — --bg #090c12
 	var bar := Panel.new()
 	bar.anchor_left   = 0.0; bar.anchor_top    = 1.0
 	bar.anchor_right  = 1.0; bar.anchor_bottom = 1.0
 	bar.offset_top    = -BAR_H; bar.offset_bottom = 0.0
 	bar.offset_left   = 0.0;   bar.offset_right  = 0.0
-	_style_panel(bar, Color(0.07, 0.08, 0.11, 0.98), false)
+	_style_panel(bar, Color(0.035, 0.047, 0.071, 0.98), false)
 	add_child(bar)
 
 	_build_bar(bar)
@@ -191,7 +191,7 @@ func _build_bar(bar: Panel) -> void:
 	_chronicle_prompt_label.size = Vector2(200.0, 18.0)
 	_chronicle_prompt_label.text = "Consejo:"
 	_chronicle_prompt_label.add_theme_font_size_override("font_size", 11)
-	_chronicle_prompt_label.add_theme_color_override("font_color", Color(0.85, 0.78, 0.46))
+	_chronicle_prompt_label.add_theme_color_override("font_color", Color(0.784, 0.573, 0.165))   # --acc #c8922a
 	bar.add_child(_chronicle_prompt_label)
 
 	for i in range(3):
@@ -478,7 +478,7 @@ func _section_label(parent: Control, text: String, x: float, top: float) -> void
 	lbl.position = Vector2(x, top)
 	lbl.size = Vector2(72.0, 18.0)
 	lbl.add_theme_font_size_override("font_size", 9)
-	lbl.add_theme_color_override("font_color", Color(0.52, 0.58, 0.68))
+	lbl.add_theme_color_override("font_color", Color(0.416, 0.392, 0.314))   # --muted #6a6450
 	parent.add_child(lbl)
 
 
@@ -508,7 +508,8 @@ func _style_panel(p: Panel, color: Color, top_accent: bool) -> void:
 	var s := StyleBoxFlat.new()
 	s.bg_color = color
 	s.border_width_top = 2
-	s.border_color = Color(0.28, 0.32, 0.42) if top_accent else Color(0.18, 0.20, 0.28)
+	# --border #242d44 for tool panel accent, dimmer for bar base
+	s.border_color = Color(0.142, 0.177, 0.267) if top_accent else Color(0.071, 0.086, 0.133)
 	p.add_theme_stylebox_override("panel", s)
 
 
@@ -516,5 +517,5 @@ func _divider(parent: Control, x: float, y: float) -> void:
 	var d := ColorRect.new()
 	d.position = Vector2(x, y + 5.0)
 	d.size     = Vector2(2.0, float(BTN) - 10.0)
-	d.color    = Color(0.30, 0.34, 0.44, 0.80)
+	d.color    = Color(0.142, 0.177, 0.267, 0.80)   # --border #242d44
 	parent.add_child(d)

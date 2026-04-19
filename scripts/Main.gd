@@ -1522,7 +1522,8 @@ func _draw() -> void:
 		for x in range(world_grid.width):
 			var cell := Vector2i(x, y)
 			var biome := world_grid.get_biome(cell)
-			var c := _biome_color(biome)
+			# Checkerboard variation: alternate light/dark per-tile for texture depth
+			var c := _biome_dark_color(biome) if (x * 7 + y * 13) % 4 < 2 else _biome_color(biome)
 			var owner := world_grid.get_owner(cell)
 			if owner != "":
 				var sc: Color = _species_colors.get(owner, Color.WHITE)
@@ -2661,6 +2662,7 @@ func _refresh_hud() -> void:
 	var advisory_options: Array[String] = []
 	if not _active_advice.is_empty():
 		advisory_options.assign(_active_advice.get("options", []) as Array)
+	hud.war_active = not _war_pairs.is_empty()
 	hud.refresh(stats_lines, stats_colors, _chronicle, _chronicle_colors, hero_lines, hero_colors, world_year, advisory_prompt, not _active_advice.is_empty())
 	ui.set_chronicle_prompt(advisory_prompt, not _active_advice.is_empty(), advisory_options)
 
@@ -2691,13 +2693,24 @@ func _cell_key(cell: Vector2i) -> String:
 	return "%s:%s" % [cell.x, cell.y]
 
 func _biome_color(biome: String) -> Color:
+	# Colours matched to the web design palette (data.js BIOMES)
 	match biome:
-		"water":    return Color(0.12, 0.36, 0.92)
-		"sand":     return Color(0.90, 0.80, 0.42)
-		"grass":    return Color(0.20, 0.72, 0.22)
-		"forest":   return Color(0.06, 0.38, 0.10)
-		"mountain": return Color(0.50, 0.48, 0.44)
+		"water":    return Color(0.165, 0.373, 0.659)   # #2a5fa8
+		"sand":     return Color(0.831, 0.722, 0.439)   # #d4b870
+		"grass":    return Color(0.353, 0.620, 0.220)   # #5a9e38
+		"forest":   return Color(0.176, 0.431, 0.176)   # #2d6e2d
+		"mountain": return Color(0.541, 0.541, 0.604)   # #8a8a9a
 		_:          return Color.WHITE
+
+func _biome_dark_color(biome: String) -> Color:
+	# Darker checkerboard variant (data.js BIOMES .dark)
+	match biome:
+		"water":    return Color(0.102, 0.247, 0.533)   # #1a3f88
+		"sand":     return Color(0.706, 0.596, 0.314)   # #b49850
+		"grass":    return Color(0.227, 0.494, 0.094)   # #3a7e18
+		"forest":   return Color(0.114, 0.306, 0.114)   # #1d4e1d
+		"mountain": return Color(0.416, 0.416, 0.478)   # #6a6a7a
+		_:          return Color.DARK_GRAY
 
 # ── Per-tile biome detail decorations ─────────────────────────────────────────
 # Called from _draw() for every tile; uses deterministic per-cell hashing
