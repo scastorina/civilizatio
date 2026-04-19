@@ -462,6 +462,12 @@ func _on_speed(idx: int) -> void:
 	_refresh_speed_highlights()
 	time_speed_changed.emit(idx)
 
+func set_speed_idx(idx: int, emit_signal: bool = false) -> void:
+	current_speed_idx = clampi(idx, 0, SPEED_DEFS.size() - 1)
+	_refresh_speed_highlights()
+	if emit_signal:
+		time_speed_changed.emit(current_speed_idx)
+
 func _on_map(idx: int) -> void:
 	current_map_idx = idx
 	_refresh_map_highlights()

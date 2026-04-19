@@ -23,6 +23,9 @@ Prototipo simple en **Godot 4** para iterar una simulación de mapa + especies.
 ## Controles
 
 - `Enter`: regenera el mundo con la configuración seleccionada.
+- `Ctrl + N`: inicia una nueva partida (regenera mundo).
+- `F5`: guarda la partida actual en `user://savegame.json`.
+- `F9`: carga la última partida guardada.
 - `E`: activa/desactiva el editor de terreno.
 - `1..5`: selecciona bioma para pintar.
   - `1`: water

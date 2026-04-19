@@ -62,6 +62,7 @@ const TECH_THRESHOLDS: Array[float] = [100.0, 300.0, 700.0]
 const CHRONICLE_MAX := 40
 const FORTIFICATION_NAMES: Array[String] = ["sin defensa", "valla de madera", "muralla de piedra", "bastion de hierro"]
 const RESOURCE_KEYS: Array[String] = ["food", "wood", "stone", "iron"]
+const SAVE_FILE_PATH := "user://savegame.json"
 const SPECIES_RELIGIONS: Dictionary = {
 	"Humanos": "Fe Sagrada",
 	"Elfos":   "Sendero Eterno",
@@ -180,6 +181,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		if ui != null and ui.is_reply_input_focused():
 			return
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+			_regenerate_world()
+			return
+		if event.keycode == KEY_F5:
+			_save_game()
+			return
+		if event.keycode == KEY_F9:
+			_load_game()
+			return
+		if event.keycode == KEY_N and event.ctrl_pressed:
 			_regenerate_world()
 			return
 
@@ -319,6 +329,170 @@ func _spawn_human_at(cell: Vector2i, species: Dictionary) -> void:
 	world_grid.set_owner(cell, species["name"] as String)
 	add_child(human)
 	humans.append(human)
+
+func _serialize_human(human: Human) -> Dictionary:
+	return {
+		"x": human.grid_position.x,
+		"y": human.grid_position.y,
+		"species": human.species_name,
+		"evolution_score": human.evolution_score,
+		"age_ticks": human.age_ticks,
+		"battles_won": human.battles_won,
+		"is_hero": human.is_hero,
+		"hero_name": human.hero_name,
+		"infected": human.infected,
+		"on_fire": human.on_fire,
+		"religion": human.religion,
+	}
+
+func _restore_human(state: Dictionary) -> void:
+	var species_name := state.get("species", "Humanos") as String
+	var species := _find_species(species_name)
+	if species.is_empty():
+		return
+	var cell := Vector2i(state.get("x", 0) as int, state.get("y", 0) as int)
+	if not world_grid.is_in_bounds(cell):
+		return
+	_spawn_human_at(cell, species)
+	var human := humans.back()
+	human.evolution_score = state.get("evolution_score", 0.0) as float
+	human.age_ticks = state.get("age_ticks", 0) as int
+	human.battles_won = state.get("battles_won", 0) as int
+	human.is_hero = state.get("is_hero", false) as bool
+	human.hero_name = state.get("hero_name", "") as String
+	human.infected = state.get("infected", false) as bool
+	human.on_fire = state.get("on_fire", false) as bool
+	human.religion = state.get("religion", SPECIES_RELIGIONS.get(species_name, "") as String) as String
+
+func _serialize_fire_cells() -> Array:
+	var out: Array = []
+	for cell: Vector2i in world_effects.fire_cells.keys():
+		out.append({
+			"x": cell.x,
+			"y": cell.y,
+			"age": world_effects.fire_cells[cell] as int,
+		})
+	return out
+
+func _restore_fire_cells(data: Array) -> void:
+	world_effects.fire_cells.clear()
+	for entry in data:
+		if entry is Dictionary:
+			var d := entry as Dictionary
+			var cell := Vector2i(d.get("x", 0) as int, d.get("y", 0) as int)
+			world_effects.fire_cells[cell] = d.get("age", 0) as int
+
+func _save_game() -> bool:
+	var save_data := {
+		"version": 1,
+		"world_year": world_year,
+		"current_speed_idx": current_speed_idx,
+		"current_map_idx": current_map_idx,
+		"move_tick_accumulator": move_tick_accumulator,
+		"world_grid": world_grid.export_state(),
+		"humans": [],
+		"species_tech": _species_tech.duplicate(true),
+		"species_research": _species_research.duplicate(true),
+		"species_resources": _species_resources.duplicate(true),
+		"species_fleets": _species_fleets.duplicate(true),
+		"species_armies": _species_armies.duplicate(true),
+		"species_pressures": _species_pressures.duplicate(true),
+		"relations": _relations.duplicate(true),
+		"war_pairs": _war_pairs.duplicate(true),
+		"alliance_pairs": _alliance_pairs.duplicate(true),
+		"chronicle": _chronicle.duplicate(true),
+		"chronicle_colors": _chronicle_colors.duplicate(true),
+		"territory_names": _territory_names.duplicate(true),
+		"known_kingdoms": _known_kingdoms.duplicate(true),
+		"species_grievances": _species_grievances.duplicate(true),
+		"deforestation_log": _deforestation_log.duplicate(true),
+		"last_war_tick": _last_war_tick.duplicate(true),
+		"tribute_pending": _tribute_pending.duplicate(true),
+		"last_species_event_era": _last_species_event_era.duplicate(true),
+		"active_advice": _active_advice.duplicate(true),
+		"next_advice_year": _next_advice_year,
+		"fire_cells": _serialize_fire_cells(),
+	}
+	for human: Human in humans:
+		(save_data["humans"] as Array).append(_serialize_human(human))
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.WRITE)
+	if file == null:
+		_log_event("Año %d: Error al guardar partida" % world_year, "")
+		return false
+	file.store_string(JSON.stringify(save_data))
+	file.close()
+	_log_event("Año %d: Partida guardada correctamente" % world_year, "")
+	return true
+
+func _load_game() -> bool:
+	if not FileAccess.file_exists(SAVE_FILE_PATH):
+		_log_event("Año %d: No existe una partida guardada" % world_year, "")
+		return false
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.READ)
+	if file == null:
+		_log_event("Año %d: No se pudo abrir la partida guardada" % world_year, "")
+		return false
+	var raw_text := file.get_as_text()
+	file.close()
+	var parsed = JSON.parse_string(raw_text)
+	if not (parsed is Dictionary):
+		_log_event("Año %d: Savegame inválido" % world_year, "")
+		return false
+	var data := parsed as Dictionary
+	var grid_data := data.get("world_grid", {}) as Dictionary
+	if not world_grid.import_state(grid_data):
+		_log_event("Año %d: Savegame incompatible con el tamaño del mundo" % world_year, "")
+		return false
+
+	for human in humans:
+		human.queue_free()
+	humans.clear()
+	world_effects.reset()
+	_trade_routes.clear()
+	_battle_markers.clear()
+	_sea_route_cache.clear()
+
+	world_year = data.get("world_year", 0) as int
+	move_tick_accumulator = data.get("move_tick_accumulator", 0.0) as float
+	current_speed_idx = clampi(data.get("current_speed_idx", current_speed_idx) as int, 0, TIME_SPEEDS.size() - 1)
+	current_map_idx = clampi(data.get("current_map_idx", current_map_idx) as int, 0, MAP_PRESETS.size() - 1)
+	if ui != null:
+		ui.set_speed_idx(current_speed_idx)
+
+	_species_tech = (data.get("species_tech", _species_tech) as Dictionary).duplicate(true)
+	_species_research = (data.get("species_research", _species_research) as Dictionary).duplicate(true)
+	_species_resources = (data.get("species_resources", _species_resources) as Dictionary).duplicate(true)
+	_species_fleets = (data.get("species_fleets", _species_fleets) as Dictionary).duplicate(true)
+	_species_armies = (data.get("species_armies", _species_armies) as Dictionary).duplicate(true)
+	_species_pressures = (data.get("species_pressures", _species_pressures) as Dictionary).duplicate(true)
+	_relations = (data.get("relations", _relations) as Dictionary).duplicate(true)
+	_war_pairs = (data.get("war_pairs", _war_pairs) as Dictionary).duplicate(true)
+	_alliance_pairs = (data.get("alliance_pairs", _alliance_pairs) as Dictionary).duplicate(true)
+	_chronicle = (data.get("chronicle", _chronicle) as Array).duplicate(true)
+	_chronicle_colors = (data.get("chronicle_colors", _chronicle_colors) as Array).duplicate(true)
+	_territory_names = (data.get("territory_names", _territory_names) as Dictionary).duplicate(true)
+	_known_kingdoms = (data.get("known_kingdoms", _known_kingdoms) as Dictionary).duplicate(true)
+	_species_grievances = (data.get("species_grievances", _species_grievances) as Dictionary).duplicate(true)
+	_deforestation_log = (data.get("deforestation_log", _deforestation_log) as Dictionary).duplicate(true)
+	_last_war_tick = (data.get("last_war_tick", _last_war_tick) as Dictionary).duplicate(true)
+	_tribute_pending = (data.get("tribute_pending", _tribute_pending) as Dictionary).duplicate(true)
+	_last_species_event_era = (data.get("last_species_event_era", _last_species_event_era) as Dictionary).duplicate(true)
+	_active_advice = (data.get("active_advice", _active_advice) as Dictionary).duplicate(true)
+	_next_advice_year = data.get("next_advice_year", _next_advice_year) as int
+
+	var humans_data := data.get("humans", []) as Array
+	for hdata in humans_data:
+		if hdata is Dictionary:
+			_restore_human(hdata as Dictionary)
+	_restore_fire_cells(data.get("fire_cells", []) as Array)
+
+	_build_and_push_minimap()
+	_settlement_cluster_cache = _find_settlement_clusters()
+	_territory_cluster_cache  = _find_territory_clusters()
+	_refresh_hud()
+	queue_redraw()
+	_log_event("Año %d: Partida cargada correctamente" % world_year, "")
+	return true
 
 func _move_humans() -> void:
 	var occupied := {}
