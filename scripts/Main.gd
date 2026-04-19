@@ -1196,6 +1196,32 @@ func _dominant_religion(species: String) -> String:
 			best = r
 	return best
 
+func _dominant_religions_for_species(species_list: Array) -> Dictionary:
+	var species_set: Dictionary = {}
+	for sp in species_list:
+		species_set[sp as String] = true
+	var counters: Dictionary = {}
+	for h in humans:
+		if h.religion == "" or not species_set.has(h.species_name):
+			continue
+		if not counters.has(h.species_name):
+			counters[h.species_name] = {}
+		var rel_counts: Dictionary = counters[h.species_name] as Dictionary
+		rel_counts[h.religion] = (rel_counts.get(h.religion, 0) as int) + 1
+	var dominant: Dictionary = {}
+	for sp in species_list:
+		var species := sp as String
+		var rel_counts := counters.get(species, {}) as Dictionary
+		var best_rel := ""
+		var best_n := 0
+		for r: String in rel_counts.keys():
+			var n := rel_counts[r] as int
+			if n > best_n:
+				best_n = n
+				best_rel = r
+		dominant[species] = best_rel
+	return dominant
+
 func _update_religions() -> void:
 	for human in humans:
 		for other in humans:
@@ -1234,6 +1260,16 @@ func _update_diplomacy() -> void:
 	for h in humans:
 		living[h.species_name] = true
 	var sp_list: Array = living.keys()
+	var dominant_religions := _dominant_religions_for_species(sp_list)
+	var cross_trade_pairs: Dictionary = {}
+	for r: Dictionary in _trade_routes:
+		if r.get("mode", "") != "cross":
+			continue
+		var rsa := r.get("species", "") as String
+		var rsb := r.get("partner", "") as String
+		if rsa == "" or rsb == "":
+			continue
+		cross_trade_pairs[_diplomacy_key(rsa, rsb)] = true
 
 	# ── Passive grievance decay (dwarves) ─────────────────────────────────────
 	if world_year % 100 == 0:
@@ -1255,20 +1291,14 @@ func _update_diplomacy() -> void:
 			else:
 				rel -= 0.001
 
-			if _dominant_religion(a) == _dominant_religion(b) and _dominant_religion(a) != "":
+			var dom_a := dominant_religions.get(a, "") as String
+			var dom_b := dominant_religions.get(b, "") as String
+			if dom_a == dom_b and dom_a != "":
 				rel += 0.002
 
 			# ── Human trade diplomacy bonus ────────────────────────────────────
 			# Humans improve relations faster with active cross-species trade
-			var has_cross_trade := false
-			for r: Dictionary in _trade_routes:
-				if r.get("mode", "") == "cross":
-					var rsa := r.get("species", "") as String
-					var rsb := r.get("partner", "") as String
-					if (rsa == a and rsb == b) or (rsa == b and rsb == a):
-						has_cross_trade = true
-						break
-			if has_cross_trade:
+			if cross_trade_pairs.has(key):
 				if a == "Humanos" or b == "Humanos":
 					rel += 0.0015   # humans are better diplomats through trade
 
