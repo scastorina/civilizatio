@@ -404,6 +404,37 @@ func _restore_fire_cells(data: Array) -> void:
 			var cell := Vector2i(d.get("x", 0) as int, d.get("y", 0) as int)
 			world_effects.fire_cells[cell] = d.get("age", 0) as int
 
+func _deserialize_string_array(raw: Variant, fallback: Array[String]) -> Array[String]:
+	var result: Array[String] = []
+	if raw is Array:
+		for item in raw as Array:
+			result.append(str(item))
+		return result
+	result.assign(fallback)
+	return result
+
+func _deserialize_color_array(raw: Variant, fallback: Array[Color]) -> Array[Color]:
+	var result: Array[Color] = []
+	if raw is Array:
+		for item in raw as Array:
+			if item is Color:
+				result.append(item as Color)
+			elif item is Dictionary:
+				var d := item as Dictionary
+				result.append(Color(
+					d.get("r", 1.0) as float,
+					d.get("g", 1.0) as float,
+					d.get("b", 1.0) as float,
+					d.get("a", 1.0) as float
+				))
+			elif item is String:
+				var color_text := item as String
+				if Color.html_is_valid(color_text):
+					result.append(Color.from_string(color_text, Color.WHITE))
+		return result
+	result.assign(fallback)
+	return result
+
 func _show_main_menu(paused_menu: bool = false) -> void:
 	if _main_menu_layer == null:
 		_main_menu_layer = CanvasLayer.new()
@@ -590,8 +621,8 @@ func _load_game() -> bool:
 	_relations = (data.get("relations", _relations) as Dictionary).duplicate(true)
 	_war_pairs = (data.get("war_pairs", _war_pairs) as Dictionary).duplicate(true)
 	_alliance_pairs = (data.get("alliance_pairs", _alliance_pairs) as Dictionary).duplicate(true)
-	_chronicle = (data.get("chronicle", _chronicle) as Array).duplicate(true)
-	_chronicle_colors = (data.get("chronicle_colors", _chronicle_colors) as Array).duplicate(true)
+	_chronicle = _deserialize_string_array(data.get("chronicle", _chronicle), _chronicle)
+	_chronicle_colors = _deserialize_color_array(data.get("chronicle_colors", _chronicle_colors), _chronicle_colors)
 	_territory_names = (data.get("territory_names", _territory_names) as Dictionary).duplicate(true)
 	_known_kingdoms = (data.get("known_kingdoms", _known_kingdoms) as Dictionary).duplicate(true)
 	_species_grievances = (data.get("species_grievances", _species_grievances) as Dictionary).duplicate(true)
