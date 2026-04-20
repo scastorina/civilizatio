@@ -101,11 +101,13 @@ var _last_species_event_era: Dictionary = {}
 const GameHUDScript = preload("res://scripts/GameHUD.gd")
 const WorldEffectsScript = preload("res://scripts/WorldEffects.gd")
 const SpeciesDataScript = preload("res://scripts/SpeciesData.gd")
+const MenuFunctionsPatchScript = preload("res://scripts/civilizatio_menu_functions_patch.gd")
 
 var ui: GameUI
 var hud: Node2D
 var camera: Camera2D
 var world_effects = WorldEffectsScript.new()
+var menu_patch = MenuFunctionsPatchScript.new()
 var _fire_cells: Dictionary = world_effects.fire_cells
 var _effects: Array[Dictionary] = world_effects.effects
 var _main_menu_layer: CanvasLayer
@@ -402,6 +404,37 @@ func _restore_fire_cells(data: Array) -> void:
 			var cell := Vector2i(d.get("x", 0) as int, d.get("y", 0) as int)
 			world_effects.fire_cells[cell] = d.get("age", 0) as int
 
+func _deserialize_string_array(raw: Variant, fallback: Array[String]) -> Array[String]:
+	var result: Array[String] = []
+	if raw is Array:
+		for item in raw as Array:
+			result.append(str(item))
+		return result
+	result.assign(fallback)
+	return result
+
+func _deserialize_color_array(raw: Variant, fallback: Array[Color]) -> Array[Color]:
+	var result: Array[Color] = []
+	if raw is Array:
+		for item in raw as Array:
+			if item is Color:
+				result.append(item as Color)
+			elif item is Dictionary:
+				var d := item as Dictionary
+				result.append(Color(
+					d.get("r", 1.0) as float,
+					d.get("g", 1.0) as float,
+					d.get("b", 1.0) as float,
+					d.get("a", 1.0) as float
+				))
+			elif item is String:
+				var color_text := item as String
+				if Color.html_is_valid(color_text):
+					result.append(Color.from_string(color_text, Color.WHITE))
+		return result
+	result.assign(fallback)
+	return result
+
 func _show_main_menu(paused_menu: bool = false) -> void:
 	if _main_menu_layer == null:
 		_main_menu_layer = CanvasLayer.new()
@@ -421,139 +454,64 @@ func _show_main_menu(paused_menu: bool = false) -> void:
 	_main_menu_panel.offset_bottom = 160
 	_main_menu_layer.add_child(_main_menu_panel)
 
-	var vb := VBoxContainer.new()
-	vb.anchor_left = 0.0
-	vb.anchor_top = 0.0
-	vb.anchor_right = 1.0
-	vb.anchor_bottom = 1.0
-	vb.offset_left = 16
-	vb.offset_top = 16
-	vb.offset_right = -16
-	vb.offset_bottom = -16
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 10)
-	_main_menu_panel.add_child(vb)
+	var vb := menu_patch.build_menu_root(_main_menu_panel)
 
-	var title := Label.new()
-	title.text = "CRÓNICAS DE CIVILIZATIO"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 30)
-	vb.add_child(title)
+	menu_patch.add_centered_label(vb, "CRÓNICAS DE CIVILIZATIO", 30)
 
-	var subtitle := Label.new()
-	subtitle.text = "Forja reinos, guerras y leyendas en la era medieval"
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_font_size_override("font_size", 14)
-	vb.add_child(subtitle)
+	menu_patch.add_centered_label(vb, "Forja reinos, guerras y leyendas en la era medieval", 14)
 
-	var crest := Label.new()
-	crest.text = "⚔  🏰  🛡   Pergamino del Consejo Real   🛡  🏰  ⚔"
-	crest.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	crest.add_theme_font_size_override("font_size", 12)
-	vb.add_child(crest)
+	menu_patch.add_centered_label(vb, "⚔  🏰  🛡   Pergamino del Consejo Real   🛡  🏰  ⚔", 12)
 
 	if not paused_menu:
-		var map_label := Label.new()
-		map_label.text = "Tipo de mundo"
-		map_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		vb.add_child(map_label)
+		menu_patch.add_left_label(vb, "Tipo de mundo")
+		menu_patch.add_selector(
+			vb,
+			["Islas del Reino", "Mundo Antiguo", "Gran Continente"],
+			_menu_map_idx,
+			func(idx: int): _menu_map_idx = idx
+		)
 
-		var map_selector := OptionButton.new()
-		map_selector.add_item("Islas del Reino", 0)
-		map_selector.add_item("Mundo Antiguo", 1)
-		map_selector.add_item("Gran Continente", 2)
-		map_selector.selected = clampi(_menu_map_idx, 0, 2)
-		map_selector.item_selected.connect(func(idx: int): _menu_map_idx = idx)
-		vb.add_child(map_selector)
+		menu_patch.add_left_label(vb, "Población inicial")
+		menu_patch.add_selector(
+			vb,
+			["Pequeña · 12", "Media · 20", "Grande · 40"],
+			_menu_population_idx,
+			func(idx: int): _menu_population_idx = idx
+		)
 
-		var pop_label := Label.new()
-		pop_label.text = "Población inicial"
-		pop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		vb.add_child(pop_label)
-
-		var pop_selector := OptionButton.new()
-		pop_selector.add_item("Pequeña · 12", 0)
-		pop_selector.add_item("Media · 20", 1)
-		pop_selector.add_item("Grande · 40", 2)
-		pop_selector.selected = clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)
-		pop_selector.item_selected.connect(func(idx: int): _menu_population_idx = idx)
-		vb.add_child(pop_selector)
-
-		var btn_start := Button.new()
-		btn_start.text = "Iniciar crónica"
-		btn_start.custom_minimum_size = Vector2(0, 42)
-		btn_start.pressed.connect(func():
+		menu_patch.add_action_button(vb, "Iniciar crónica", func():
 			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
 			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
 			_regenerate_world()
 			_start_game_from_menu(false)
 		)
-		vb.add_child(btn_start)
 
-		var btn_load_initial := Button.new()
-		btn_load_initial.text = "Cargar crónica"
-		btn_load_initial.custom_minimum_size = Vector2(0, 42)
-		btn_load_initial.pressed.connect(func():
+		menu_patch.add_action_button(vb, "Cargar crónica", func():
 			if _load_game():
 				_start_game_from_menu(false)
 		)
-		vb.add_child(btn_load_initial)
 
-		var hint_initial := Label.new()
-		hint_initial.text = "Atajos: ESC menú · F5 guardar · F9 cargar"
-		hint_initial.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint_initial.add_theme_font_size_override("font_size", 11)
-		vb.add_child(hint_initial)
+		menu_patch.add_centered_label(vb, "Atajos: ESC menú · F5 guardar · F9 cargar", 11)
 	else:
 		_speed_before_pause = maxi(current_speed_idx, 1)
-		var year_label := Label.new()
-		year_label.text = "Año %d" % world_year
-		year_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		vb.add_child(year_label)
-
-		var btn_continue := Button.new()
-		btn_continue.text = "Continuar reino"
-		btn_continue.custom_minimum_size = Vector2(0, 42)
-		btn_continue.pressed.connect(func(): _start_game_from_menu(true))
-		vb.add_child(btn_continue)
-
-		var btn_save := Button.new()
-		btn_save.text = "Guardar crónica"
-		btn_save.custom_minimum_size = Vector2(0, 42)
-		btn_save.pressed.connect(func(): _save_game())
-		vb.add_child(btn_save)
-
-		var btn_load_pause := Button.new()
-		btn_load_pause.text = "Cargar crónica"
-		btn_load_pause.custom_minimum_size = Vector2(0, 42)
-		btn_load_pause.pressed.connect(func():
+		menu_patch.add_centered_label(vb, "Año %d" % world_year, 14)
+		menu_patch.add_action_button(vb, "Continuar reino", func(): _start_game_from_menu(true))
+		menu_patch.add_action_button(vb, "Guardar crónica", func(): _save_game())
+		menu_patch.add_action_button(vb, "Cargar crónica", func():
 			if _load_game():
 				_start_game_from_menu(false)
 		)
-		vb.add_child(btn_load_pause)
 
-		var btn_new_pause := Button.new()
-		btn_new_pause.text = "Nueva crónica"
-		btn_new_pause.custom_minimum_size = Vector2(0, 42)
-		btn_new_pause.pressed.connect(func():
+		menu_patch.add_action_button(vb, "Nueva crónica", func():
 			current_map_idx = clampi(_menu_map_idx, 0, MAP_PRESETS.size() - 1)
 			initial_population = MENU_POP_OPTIONS[clampi(_menu_population_idx, 0, MENU_POP_OPTIONS.size() - 1)]
 			_regenerate_world()
 			_start_game_from_menu(false)
 		)
-		vb.add_child(btn_new_pause)
 
-		var hint_pause := Label.new()
-		hint_pause.text = "Atajos: F5 guardar · F9 cargar"
-		hint_pause.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint_pause.add_theme_font_size_override("font_size", 11)
-		vb.add_child(hint_pause)
+		menu_patch.add_centered_label(vb, "Atajos: F5 guardar · F9 cargar", 11)
 
-	var btn_exit := Button.new()
-	btn_exit.text = "Salir del reino"
-	btn_exit.custom_minimum_size = Vector2(0, 42)
-	btn_exit.pressed.connect(func(): get_tree().quit())
-	vb.add_child(btn_exit)
+	menu_patch.add_action_button(vb, "Salir del reino", func(): get_tree().quit())
 
 	_game_started = false
 	current_speed_idx = 0
@@ -663,8 +621,8 @@ func _load_game() -> bool:
 	_relations = (data.get("relations", _relations) as Dictionary).duplicate(true)
 	_war_pairs = (data.get("war_pairs", _war_pairs) as Dictionary).duplicate(true)
 	_alliance_pairs = (data.get("alliance_pairs", _alliance_pairs) as Dictionary).duplicate(true)
-	_chronicle = (data.get("chronicle", _chronicle) as Array).duplicate(true)
-	_chronicle_colors = (data.get("chronicle_colors", _chronicle_colors) as Array).duplicate(true)
+	_chronicle = _deserialize_string_array(data.get("chronicle", _chronicle), _chronicle)
+	_chronicle_colors = _deserialize_color_array(data.get("chronicle_colors", _chronicle_colors), _chronicle_colors)
 	_territory_names = (data.get("territory_names", _territory_names) as Dictionary).duplicate(true)
 	_known_kingdoms = (data.get("known_kingdoms", _known_kingdoms) as Dictionary).duplicate(true)
 	_species_grievances = (data.get("species_grievances", _species_grievances) as Dictionary).duplicate(true)
